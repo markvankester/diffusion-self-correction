@@ -1,0 +1,22 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info/
+
+# Local environments and IDE files
+.venv/
+.idea/
+.python-version
+
+# Training outputs and local experiment state
+checkpoints/
+wandb/
+scripts/
+docs/
+
+# Large/generated datasets, while keeping data/ source code tracked
+data/*.jsonl
+data/*.npy

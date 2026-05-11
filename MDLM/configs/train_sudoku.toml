@@ -1,0 +1,52 @@
+# Training config for Sudoku MDLM baseline.
+
+task = "sudoku"                     # arithmetic or sudoku
+
+# Data and paths
+data_path    = "data/sudoku-train-data.npy"
+output_dir   = "./checkpoints/sudoku/baseline"
+tokenizer_id = "./tokenizers/sudoku_char_tokenizer"
+limit_data   = 0                    # Number of rows to load; use 0 for the full dataset.
+eval_fraction = 0.05                # Reserve 5% of training boards for eval tracking.
+
+# Model architecture
+d_model   = 256                     # Transformer hidden size.
+n_heads   = 8                       # Number of attention heads.
+n_layers  = 8                       # Number of transformer blocks.
+mlp_ratio = 2                       # Feed-forward expansion ratio.
+seq_len   = 81                      # 81 board cells.
+
+# Advanced architecture 
+block_type        = "llama"         # Transformer block implementation: "sequential", "parallel", or "llama".
+layer_norm_type   = "rms"           # Layer norm implementation.
+activation_type   = "swiglu"        # Activation used by the generic MLP path; the llama block uses fixed SiLU gating.
+init_fn           = "mitchell"      # Weight initialization scheme.
+attention_dropout = 0.1
+residual_dropout  = 0.1
+embedding_dropout = 0.1
+
+# Optimization
+batch_size   = 256
+grad_accum   = 1
+lr           = 3e-4
+lr_scheduler_type = "constant_with_warmup"      # Options: "linear", "cosine", "constant", "constant_with_warmup", "cosine_with_restarts", "polynomial", "inverse_sqrt".
+weight_decay = 0.05
+max_steps    = 100000
+warmup_steps = 2000
+
+# Diffusion loss
+loss_weight_type = "scheduler"    # Options: "uniform", "scheduler".
+loss_norm_type   = "token"        # Options: "token", "sequence", "batch".
+time_epsilon     = 1e-3           # Lower bound for sampled diffusion timesteps.
+
+# Evaluation
+eval_strategy = "steps"           # Evaluation strategy: "no", "steps", "epoch".
+eval_steps    = 1000
+
+# Logging and Checkpointing
+logging_steps = 10
+save_steps    = 10000
+
+# Reporting
+run_name  = "mdlm-sudoku-baseline"
+report_to = "wandb"               # Options: "none", "wandb".

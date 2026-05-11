@@ -1,0 +1,67 @@
+program: MDLM/train_mdlm.py
+project: "diffusion-self-correction"
+
+# How the agent invokes the program.  ${args} expands to --key value pairs.
+command:
+  - uv
+  - run
+  - ${program}
+  - ${args}
+
+# Sweep strategy
+method: bayes
+
+metric:
+  name: eval_loss
+  goal: minimize
+
+# ── Parameters ────────────────────────────────────────────────────────────────
+parameters:
+
+  # --- Optimization (most impactful) ----------------------------------------
+  lr:
+    distribution: log_uniform_values
+    min: 0.000001
+    max: 0.01
+
+  lr_scheduler_type:
+    values: ["constant_with_warmup", "cosine"]
+
+  weight_decay:
+    values: [0.0, 0.01, 0.05, 0.1]
+
+  warmup_steps:
+    values: [0, 100, 500]
+
+  # --- Diffusion-specific ----------------------------------------------------
+  loss_weight_type:
+    values: ["uniform", "scheduler"]
+
+  # --- Architecture ------------------------------------
+  d_model:
+    value: 192
+
+  n_layers:
+    value: 6
+
+  # --- Fixed for all sweep runs -------------------
+  max_steps:
+    value: 5000
+
+  batch_size:
+    value: 128
+
+  grad_accum:
+    value: 2
+
+  report_to:
+    value: "wandb"
+
+  eval_strategy:
+    value: "steps"
+
+  eval_steps:
+    value: 500
+
+  save_steps:
+    value: 500
