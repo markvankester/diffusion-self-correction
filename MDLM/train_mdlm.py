@@ -226,6 +226,8 @@ def main():
         loss_weight_type=args.loss_weight_type,
         loss_norm_type=args.loss_norm_type,
         remove_unused_columns=False,
+        bf16=True,
+        dataloader_num_workers=4,
     )
 
     scheduler = LinearAlphaScheduler()
