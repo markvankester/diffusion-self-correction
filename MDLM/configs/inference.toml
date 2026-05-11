@@ -1,24 +1,24 @@
 # Default inference config for `uv run MDLM/run_inference.py`.
 
 # Checkpoint and device
-task = "arithmetic"                              # arithmetic or sudoku
-checkpoint = "./checkpoints/arithmetic/prism"
+task = "sudoku"                              # arithmetic or sudoku
+checkpoint = "./checkpoints/sudoku/baseline/checkpoint-2000"
 device = "cuda"
 
 # Sampling
-steps = 6                                   # Number of reverse-diffusion steps.
-max_length = 20                             # Fixed total canvas size. Must match seq_len used during training.
-remasking = "prism"                         # "random", "low_confidence", or "prism".
+steps = 8                                   # Number of reverse-diffusion steps.
+max_length = 81                             # Fixed total canvas size. Must match seq_len used during training.
+remasking = "random"                        # "random", "low_confidence", or "prism".
 
 # PRISM remasking
 prism_eta = 0.2                             # Remasking rate. Must be > 0 for PRISM remasking to occur.
 prism_quality_threshold = 0.6               # Only remask tokens with quality below this threshold.
 
 # Inference statistics
-show_stats = true                           # Whether to show step-by-step inference statistics.
+show_stats = false                           # Whether to show step-by-step inference statistics.
 
 # Dataset Prompts
 use_dataset = true
-dataset_path = "data/arithmetic_test_corrupted.jsonl"
-dataset_mode = "first"                      # "first" or "random"
-num_prompts = 8                             # Number of prompts to select from the dataset
+dataset_path = "data/sudoku-test-data.npy"
+dataset_mode = "random"                      # "first" or "random"
+num_prompts = 5                              # Number of prompts to select from the dataset

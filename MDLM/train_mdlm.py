@@ -82,6 +82,7 @@ def parse_args() -> argparse.Namespace:
 
     # Training Hyperparameters
     parser.add_argument("--batch_size",   type=int,   default=None)
+    parser.add_argument("--eval_batch_size", type=int, default=None)
     parser.add_argument("--grad_accum",   type=int,   default=None)
     parser.add_argument("--lr",           type=float, default=None)
     parser.add_argument("--lr_scheduler_type", type=str, default=None)
@@ -209,6 +210,7 @@ def main():
     trainer_config = TrainerConfig(
         output_dir=args.output_dir,
         per_device_train_batch_size=args.batch_size,
+        per_device_eval_batch_size=args.eval_batch_size if args.eval_batch_size is not None else 1024,
         gradient_accumulation_steps=args.grad_accum,
         learning_rate=args.lr,
         lr_scheduler_type=args.lr_scheduler_type,

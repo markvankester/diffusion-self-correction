@@ -90,24 +90,32 @@ class SudokuTaskAdapter(TaskAdapter):
         delimiter: str | None = None,
     ) -> list[str]:
         """
-        Return board strings for inference / generation evaluation.
+        Return unsolved Sudoku puzzles for inference.
 
-        Each string is a full 81-character board (no prompt delimiter).
-        For infill-mode inference the caller is responsible for masking
-        the non-clue positions before passing to the sampler.
+        Clue cells retain their digit; non-clue cells are set to 0 so the
+        infill sampler can replace them with [MASK] before passing to the model.
         """
         from data.preprocessing.sudoku import preprocess_sudoku, boards_to_strings
 
-        flat_boards, _ = preprocess_sudoku(path)
+        flat_boards, flat_clues = preprocess_sudoku(path)
         N = len(flat_boards)
 
         if mode == "random":
             indices = random.sample(range(N), min(num, N))
-            selected = flat_boards[indices]
         else:
-            selected = flat_boards[:num]
+            indices = list(range(min(num, N)))
 
-        return boards_to_strings(selected)
+        selected_boards = flat_boards[indices]
+        selected_clues  = flat_clues[indices]
+
+        # Non-clue cells become 0; clue cells keep their digit value.
+        puzzles = selected_boards * selected_clues
+
+        # Store solved boards for display in run_inference (ground truth grids).
+        self._solution_strings = boards_to_strings(selected_boards)
+
+        return boards_to_strings(puzzles)
+
 
     def describe_example(self, text: str) -> list[tuple[str, str]]:
         """Show the board as a 9×9 grid for human-readable inspection."""

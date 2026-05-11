@@ -74,7 +74,53 @@ def load_model(checkpoint: str, device: torch.device) -> tuple:
     return tokenizer, model, prism_head
 
 
-def run_prompts(prompts: list[str], tokenizer, model, sampler_kwargs: dict, show_stats: bool = False, infill: bool = False, prism_head: torch.nn.Module = None, max_length: int = 20):
+def _render_sudoku_grid(
+    flat: str,
+    clue_str: str | None = None,
+    solution_str: str | None = None,
+) -> str:
+    """
+    Format an 81-character Sudoku string as a readable 9x9 grid.
+
+    clue_str   : the unsolved puzzle (0=empty cell) — clue positions are bold yellow.
+    solution_str: the ground truth — used to colour correct/wrong model fills.
+                  Correct fills → green.  Wrong fills → red.
+                  When None, all non-clue cells are shown without colour.
+    """
+    BOLD_YELLOW = "\033[1;33m"
+    GREEN       = "\033[92m"
+    RED         = "\033[91m"
+    RESET       = "\033[0m"
+    lines = []
+    for row in range(9):
+        row_str = "  "
+        for col in range(9):
+            pos = row * 9 + col
+            ch = flat[pos] if pos < len(flat) else "?"
+            if ch == "0":
+                ch = "·"
+            is_clue = clue_str is not None and pos < len(clue_str) and clue_str[pos] != "0"
+            if is_clue:
+                cell = f"{BOLD_YELLOW}{ch}{RESET}"
+            elif solution_str is not None and pos < len(solution_str):
+                # Model output mode: colour by correctness
+                if flat[pos] == solution_str[pos]:
+                    cell = f"{GREEN}{ch}{RESET}"
+                else:
+                    cell = f"{RED}{ch}{RESET}"
+            else:
+                # Ground truth mode or no solution: plain white
+                cell = ch
+            row_str += cell + " "
+            if col in (2, 5):
+                row_str += "| "
+        lines.append(row_str)
+        if row in (2, 5):
+            lines.append("  ------+-------+------")
+    return "\n".join(lines)
+
+
+def run_prompts(prompts: list[str], tokenizer, model, sampler_kwargs: dict, show_stats: bool = False, infill: bool = False, prism_head: torch.nn.Module = None, max_length: int = 20, task_name: str = "", solutions: list[str] | None = None):
     """Run MDLM sampling on a list of prompt strings and print results."""
     scheduler = LinearAlphaScheduler()
     sampler = MDLMSampler(model=model, tokenizer=tokenizer, scheduler=scheduler, prism_head=prism_head)
@@ -141,15 +187,28 @@ def run_prompts(prompts: list[str], tokenizer, model, sampler_kwargs: dict, show
                 display_prompt_ids = prompt_ids[: eq_idx + 1]
                 display_prefix = tokenizer.decode(display_prompt_ids, skip_special_tokens=True)
             else:
-                # Fallback: no '=' present, behave like standard infill and append masks.
-                n_masks = max(0, max_length - len(prompt_ids))
-                masked_prompt_ids = prompt_ids + [tokenizer.mask_token_id] * n_masks
-                revisitable_region = [False] * len(masked_prompt_ids)
-                for pos in range(len(prompt_ids), len(masked_prompt_ids)):
-                    revisitable_region[pos] = True
-                rhs_span = (len(prompt_ids), len(masked_prompt_ids))
-                display_prompt_ids = prompt_ids
-                display_prefix = prompt
+                zero_token_id = tokenizer.convert_tokens_to_ids("0")
+                if task_name == "sudoku" and zero_token_id in prompt_ids:
+                    # Sudoku mode: replace '0' (empty cell) tokens with [MASK]
+                    # and mark those positions as revisitable.
+                    masked_prompt_ids = [
+                        tokenizer.mask_token_id if tid == zero_token_id else tid
+                        for tid in prompt_ids
+                    ]
+                    revisitable_region = [tid == zero_token_id for tid in prompt_ids]
+                    rhs_span = (0, len(masked_prompt_ids))
+                    display_prefix = ""
+                    display_prompt_ids = []   # show stats for all 81 positions
+                else:
+                    # Fallback: no '=' present, behave like standard infill and append masks.
+                    n_masks = max(0, max_length - len(prompt_ids))
+                    masked_prompt_ids = prompt_ids + [tokenizer.mask_token_id] * n_masks
+                    revisitable_region = [False] * len(masked_prompt_ids)
+                    for pos in range(len(prompt_ids), len(masked_prompt_ids)):
+                        revisitable_region[pos] = True
+                    rhs_span = (len(prompt_ids), len(masked_prompt_ids))
+                    display_prompt_ids = prompt_ids
+                    display_prefix = prompt
 
             output = sampler.infill(
                 [masked_prompt_ids],
@@ -157,13 +216,20 @@ def run_prompts(prompts: list[str], tokenizer, model, sampler_kwargs: dict, show
                 revisitable_region=[revisitable_region],
             )
             generated_ids = output.sequences[0].tolist()
-            # For arithmetic infill, decode the full editable RHS span so both
-            # warm-start digits and newly infilled tail are visible.
             start, end = rhs_span
-            answer = tokenizer.decode(generated_ids[start:end], skip_special_tokens=True)
+            # Strip spaces: character-level tokenizers sometimes insert spaces on decode.
+            answer = tokenizer.decode(generated_ids[start:end], skip_special_tokens=True).replace(" ", "")
 
+            full_answer = display_prefix + answer.strip()
             print(f"\n  [{idx}] [Original] : {prompt}")
-            print(f"      [Infilled] : {display_prefix}{answer.strip()}")
+            print(f"      [Infilled] : {full_answer}")
+            if task_name == "sudoku" and len(full_answer) == 81:
+                solution = solutions[idx - 1] if solutions and idx - 1 < len(solutions) else None
+                if solution:
+                    print(f"\n  Ground truth (bold=clue):")
+                    print(_render_sudoku_grid(solution, clue_str=prompt))
+                print(f"\n  Model output (bold=clue, green=correct, red=wrong):")
+                print(_render_sudoku_grid(full_answer, clue_str=prompt, solution_str=solution))
         else:
             output = sampler.sample([prompt_ids], config=sample_config)
             generated_ids = output.sequences[0].tolist()
@@ -306,6 +372,7 @@ def parse_args() -> argparse.Namespace:
             delim = args.prompt_delimiter or task.default_prompt_delimiter
             print(f"[*] Loading {num} prompts from dataset ({path}, mode={mode}, task={args.task})...")
             args.prompts = task.load_dataset_prompts(path, mode, num, delim)
+            args.solutions = getattr(task, "_solution_strings", None)
         
         # Fallbacks if dataset failed or wasn't used
         if not args.prompts:
@@ -365,7 +432,8 @@ def main():
     infill = getattr(args, "infill", False)
     max_length = args.max_length or 20
 
-    run_prompts(args.prompts, tokenizer, model, sampler_kwargs, show_stats=show_stats, infill=infill, prism_head=prism_head, max_length=max_length)
+    solutions = getattr(args, "solutions", None)
+    run_prompts(args.prompts, tokenizer, model, sampler_kwargs, show_stats=show_stats, infill=infill, prism_head=prism_head, max_length=max_length, task_name=args.task, solutions=solutions)
     print()
 
 
