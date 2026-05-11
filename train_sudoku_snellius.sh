@@ -16,4 +16,4 @@ cd $HOME/diffusion-self-correction
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
 # uv run automatically resolves the virtual environment and runs the script
-uv run MDLM/train_mdlm.py MDLM/configs/train_sudoku.toml
+uv run MDLM/train_mdlm.py --config MDLM/configs/train_sudoku.toml
