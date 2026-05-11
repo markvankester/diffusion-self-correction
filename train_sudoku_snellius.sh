@@ -1,9 +1,9 @@
 #!/bin/bash
 #SBATCH --job-name=mdlm_sudoku
-#SBATCH --time=02:00:00           
+#SBATCH --time=00:10:00           
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
-#SBATCH --partition=gpu           
+#SBATCH --partition=gpu_shared           
 #SBATCH --gres=gpu:1              
 
 # Ensure your PATH is loaded just in case `uv` is installed in ~/.local/bin
