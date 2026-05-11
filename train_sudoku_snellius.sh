@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=mdlm_sudoku
-#SBATCH --time=00:10:00           
+#SBATCH --time=02:00:00           
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=gpu_a100
