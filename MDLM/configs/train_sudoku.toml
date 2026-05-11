@@ -45,7 +45,7 @@ eval_steps    = 1000
 
 # Logging and Checkpointing
 logging_steps = 10
-save_steps    = 25000
+save_steps    = 2000
 
 # Reporting
 run_name  = "mdlm-sudoku-baseline"
