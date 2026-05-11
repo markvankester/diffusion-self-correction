@@ -3,7 +3,7 @@
 #SBATCH --time=00:10:00           
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
-#SBATCH --partition=gpu_shared           
+#SBATCH --partition=gpu_a100
 #SBATCH --gres=gpu:1              
 
 # Ensure your PATH is loaded just in case `uv` is installed in ~/.local/bin
