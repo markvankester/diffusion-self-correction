@@ -14,6 +14,8 @@ wheels/
 # Training outputs and local experiment state
 checkpoints/
 wandb/
+sudoku_step_logs/
+inference_logs/
 scripts/
 docs/
 
