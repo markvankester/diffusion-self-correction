@@ -3,7 +3,7 @@ train_mdlm.py
 =============
 Standalone training script for Masked Diffusion Language Models (MDLM).
 
-All hyperparameters are controlled via the train.toml config file.
+All hyperparameters are controlled via task-specific TOML config files.
 CLI flags override any TOML value if provided.
 """
 
@@ -31,7 +31,12 @@ from data.processing.collators import NoAttentionMaskWrapper
 from MDLM.tasks import get_task_adapter
 
 
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "configs" / "train.toml"
+CONFIG_DIR = Path(__file__).resolve().parent / "configs"
+DEFAULT_CONFIG_PATH = CONFIG_DIR / "train_arithmetic.toml"
+TASK_CONFIG_PATHS = {
+    "arithmetic": CONFIG_DIR / "train_arithmetic.toml",
+    "sudoku": CONFIG_DIR / "train_sudoku.toml",
+}
 
 
 # ============================================================================
@@ -49,7 +54,7 @@ def load_config_file(config_path: str | os.PathLike) -> dict:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train a Masked Diffusion Language Model")
 
-    parser.add_argument("--config", type=str, default=str(DEFAULT_CONFIG_PATH),
+    parser.add_argument("--config", type=str, default=None,
                         help="Path to a TOML config file")
     parser.add_argument("--task", type=str, choices=["arithmetic", "sudoku"], default=None,
                         help="Task adapter used for dataset and tokenizer defaults.")
@@ -108,9 +113,18 @@ def parse_args() -> argparse.Namespace:
 
     # Load TOML first, then let CLI flags override
     initial_args, _ = parser.parse_known_args()
-    parser.set_defaults(**load_config_file(initial_args.config))
-    parser.set_defaults(config=initial_args.config)
+    config_path = _default_config_path(initial_args)
+    parser.set_defaults(**load_config_file(config_path))
+    parser.set_defaults(config=str(config_path))
     return parser.parse_args()
+
+
+def _default_config_path(args: argparse.Namespace) -> Path:
+    if args.config:
+        return Path(args.config)
+    if args.task in TASK_CONFIG_PATHS:
+        return TASK_CONFIG_PATHS[args.task]
+    return DEFAULT_CONFIG_PATH
 
 
 # ============================================================================
