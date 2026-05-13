@@ -107,6 +107,10 @@ class ArithmeticTaskAdapter(TaskAdapter):
             selected = lines[:num]
 
         prompt_delimiter = delimiter or self.default_prompt_delimiter
+        self._solution_strings = [
+            item.get("ground_truth") or item.get("text", "")
+            for item in selected
+        ]
         if prompt_delimiter is None:
             return [item["text"] for item in selected]
 

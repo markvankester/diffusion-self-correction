@@ -1,24 +1,7 @@
-# Default inference config for `uv run MDLM/run_inference.py`.
+# Default inference selector for `uv run MDLM/run_inference.py`.
+#
+# Change only this value to switch between task-specific inference configs:
+#   "arithmetic" -> MDLM/configs/inference_arithmetic.toml
+#   "sudoku"     -> MDLM/configs/inference_sudoku.toml
 
-# Checkpoint and device
-task = "sudoku"                              # arithmetic or sudoku
-checkpoint = "./checkpoints/sudoku/baseline/checkpoint-2000"
-device = "cuda"
-
-# Sampling
-steps = 8                                   # Number of reverse-diffusion steps.
-max_length = 81                             # Fixed total canvas size. Must match seq_len used during training.
-remasking = "random"                        # "random", "low_confidence", or "prism".
-
-# PRISM remasking
-prism_eta = 0.2                             # Remasking rate. Must be > 0 for PRISM remasking to occur.
-prism_quality_threshold = 0.6               # Only remask tokens with quality below this threshold.
-
-# Inference statistics
-show_stats = false                           # Whether to show step-by-step inference statistics.
-
-# Dataset Prompts
-use_dataset = true
-dataset_path = "data/sudoku-test-data.npy"
-dataset_mode = "random"                      # "first" or "random"
-num_prompts = 5                              # Number of prompts to select from the dataset
+task = "arithmetic"

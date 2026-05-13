@@ -1,0 +1,26 @@
+# Arithmetic inference config.
+
+# Checkpoint and device
+task = "arithmetic"
+checkpoint = "./checkpoints/arithmetic/test2/checkpoint-40000"
+device = "cuda"
+
+# Sampling
+steps = 16
+max_length = 20
+remasking = "low_confidence"
+
+# PRISM remasking
+prism_eta = 0.2
+prism_quality_threshold = 0.6
+
+# Inference statistics
+show_stats = false
+show_steps = false
+
+# Dataset prompts
+use_dataset = true
+dataset_path = "data/arithmetic_eval.jsonl"
+dataset_mode = "first"
+num_prompts = 10
+prompt_delimiter = "="

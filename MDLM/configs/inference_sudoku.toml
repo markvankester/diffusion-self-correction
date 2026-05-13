@@ -1,0 +1,25 @@
+# Sudoku inference config.
+
+# Checkpoint and device
+task = "sudoku"
+checkpoint = "./checkpoints/sudoku/baseline/checkpoint-100000"
+device = "cuda"
+
+# Sampling
+steps = 16
+max_length = 81
+remasking = "low_confidence"
+
+# PRISM remasking
+prism_eta = 0.2
+prism_quality_threshold = 0.6
+
+# Inference statistics
+show_stats = false
+show_steps = true
+
+# Dataset prompts
+use_dataset = true
+dataset_path = "data/sudoku-test-data.npy"
+dataset_mode = "first"
+num_prompts = 10

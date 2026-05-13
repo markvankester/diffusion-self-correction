@@ -5,7 +5,7 @@ task = "arithmetic"                                         # arithmetic or sudo
 # Data and paths
 data_path = "data/arithmetic_train.jsonl"                   # Training dataset path.
 eval_data_path = "data/arithmetic_eval.jsonl"               # Evaluation dataset path.
-output_dir = "./checkpoints/arithmetic/test3"               # Directory for checkpoints and trainer outputs.
+output_dir = "./checkpoints/arithmetic/final"               # Directory for checkpoints and trainer outputs.
 tokenizer_id = "./tokenizers/arithmetic_char_tokenizer"     # Arithmetic tokenizer path or Hugging Face tokenizer ID.
 limit_data = 0                                              # Number of rows to load; use 0 for the full dataset.
 mask_until_token = "="                                      # Optional: set labels to -100 for all tokens up to and including this token.
@@ -27,13 +27,13 @@ residual_dropout = 0.1
 embedding_dropout = 0.1                    
 
 # Optimization
-batch_size = 128
-grad_accum = 2
+batch_size = 256
+grad_accum = 1
 lr = 3e-4
 lr_scheduler_type = "constant_with_warmup"      # Options: "linear", "cosine", "constant", "constant_with_warmup", "cosine_with_restarts", "polynomial", "inverse_sqrt".
 weight_decay = 0.05
-max_steps = 40000                               
-warmup_steps = 500                              
+max_steps = 400000
+warmup_steps = 2000
 
 # Diffusion loss
 loss_weight_type = "scheduler"               # Options: "uniform", "scheduler".
@@ -41,12 +41,12 @@ loss_norm_type = "token"                     # Options: "token", "sequence", "ba
 time_epsilon = 1e-3                          # Lower bound for sampled diffusion timesteps.
 
 # Evaluation
-eval_strategy = "epoch"                      # Evaluation strategy: "no", "steps", "epoch".
-eval_steps = 500                             
+eval_strategy = "steps"                      # Evaluation strategy: "no", "steps", "epoch".
+eval_steps = 1000
 
 # Logging and Checkpointing
 logging_steps = 10
-save_steps = 20000
+save_steps = 50000
 
 # Reporting
 run_name = "mdlm-arithmetic-test"
