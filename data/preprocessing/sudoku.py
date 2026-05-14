@@ -65,7 +65,35 @@ def preprocess_sudoku(file_path):
         print(f"Loaded {flat_boards.shape[0]} puzzles from cache.")
         return flat_boards, flat_starting_clues
 
-    flat_boards, flat_starting_clues, _ = preprocess_sudoku_with_strategies(file_path)
+    print(f"Loading data from {file_path}...")
+    raw_data = np.load(file_path, mmap_mode="r")
+    n_samples = raw_data.shape[0]
+
+    print("Reshaping and extracting chunks...")
+    chunks = raw_data[:, 1:].reshape(n_samples, 81, 4)
+
+    rows = chunks[:, :, 0].astype(np.int8)
+    cols = chunks[:, :, 1].astype(np.int8)
+    values = chunks[:, :, 2].astype(np.int8)
+    clue_flags = (chunks[:, :, 3] == 0).astype(np.int8)
+
+    print("Constructing solved boards and clue masks...")
+    solved_boards = np.zeros((n_samples, 9, 9), dtype=np.int8)
+    starting_clues = np.zeros((n_samples, 9, 9), dtype=np.int8)
+
+    puzzle_idx = np.arange(n_samples)[:, None]
+    solved_boards[puzzle_idx, rows, cols] = values
+    starting_clues[puzzle_idx, rows, cols] = clue_flags
+
+    print("Flattening for the Transformer...")
+    flat_boards = solved_boards.reshape(n_samples, 81)
+    flat_starting_clues = starting_clues.reshape(n_samples, 81)
+
+    print(f"Saving preprocessed data to {folder}...")
+    np.save(boards_path, flat_boards)
+    np.save(clues_path, flat_starting_clues)
+
+    print(f"Done, processed {n_samples} puzzles.")
     return flat_boards, flat_starting_clues
 
 
