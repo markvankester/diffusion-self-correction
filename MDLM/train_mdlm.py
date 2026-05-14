@@ -84,6 +84,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--attention_dropout", type=float, default=None)
     parser.add_argument("--residual_dropout", type=float, default=None)
     parser.add_argument("--embedding_dropout", type=float, default=None)
+    parser.add_argument("--weight_tying", action=argparse.BooleanOptionalAction, default=None)
 
     # Training Hyperparameters
     parser.add_argument("--batch_size",   type=int,   default=None)
@@ -153,6 +154,7 @@ def build_model(args, tokenizer) -> MDLMModelLM:
             "attention_dropout",
             "residual_dropout",
             "embedding_dropout",
+            "weight_tying",
         )
         if getattr(args, k) is not None
     }

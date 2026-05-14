@@ -1,6 +1,6 @@
 import os
 
-from tokenizers import Regex, Tokenizer, models, pre_tokenizers
+from tokenizers import Regex, Tokenizer, decoders, models, pre_tokenizers
 from transformers import PreTrainedTokenizerFast
 
 
@@ -18,6 +18,7 @@ def build_tokenizer():
 
     tokenizer = Tokenizer(models.WordLevel(vocab=vocab_dict, unk_token="[UNK]"))
     tokenizer.pre_tokenizer = pre_tokenizers.Split(Regex(r"[\s\S]"), behavior="isolated")
+    tokenizer.decoder = decoders.Fuse()
 
     hf_tokenizer = PreTrainedTokenizerFast(
         tokenizer_object=tokenizer,

@@ -25,6 +25,7 @@ init_fn = "mitchell"                        # Weight initialization scheme.
 attention_dropout = 0.1                    
 residual_dropout = 0.1                     
 embedding_dropout = 0.1                    
+weight_tying = true                         # Tie output logits to input embeddings; important for the tiny char-level arithmetic model.
 
 # Optimization
 batch_size = 256

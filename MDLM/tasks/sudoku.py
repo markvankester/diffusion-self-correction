@@ -95,9 +95,9 @@ class SudokuTaskAdapter(TaskAdapter):
         Clue cells retain their digit; non-clue cells are set to 0 so the
         infill sampler can replace them with [MASK] before passing to the model.
         """
-        from data.preprocessing.sudoku import preprocess_sudoku_with_strategies, boards_to_strings
+        from data.preprocessing.sudoku import preprocess_sudoku, boards_to_strings
 
-        flat_boards, flat_clues, flat_strategies = preprocess_sudoku_with_strategies(path)
+        flat_boards, flat_clues = preprocess_sudoku(path)
         N = len(flat_boards)
 
         if num <= 0:
@@ -110,14 +110,12 @@ class SudokuTaskAdapter(TaskAdapter):
 
         selected_boards = flat_boards[indices]
         selected_clues  = flat_clues[indices]
-        selected_strategies = flat_strategies[indices]
 
         # Non-clue cells become 0; clue cells keep their digit value.
         puzzles = selected_boards * selected_clues
 
         # Store solved boards for display in run_inference (ground truth grids).
         self._solution_strings = boards_to_strings(selected_boards)
-        self._strategy_values = selected_strategies.tolist()
 
         return boards_to_strings(puzzles)
 
