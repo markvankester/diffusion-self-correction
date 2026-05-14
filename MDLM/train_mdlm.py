@@ -90,6 +90,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch_size",   type=int,   default=None)
     parser.add_argument("--eval_batch_size", type=int, default=None)
     parser.add_argument("--grad_accum",   type=int,   default=None)
+    parser.add_argument("--bf16", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--dataloader_num_workers", type=int, default=None)
     parser.add_argument("--lr",           type=float, default=None)
     parser.add_argument("--lr_scheduler_type", type=str, default=None)
     parser.add_argument("--weight_decay", type=float, default=None)
@@ -244,8 +246,8 @@ def main():
         loss_weight_type=args.loss_weight_type,
         loss_norm_type=args.loss_norm_type,
         remove_unused_columns=False,
-        bf16=True,
-        dataloader_num_workers=4,
+        bf16=bool(args.bf16),
+        dataloader_num_workers=args.dataloader_num_workers if args.dataloader_num_workers is not None else 0,
     )
 
     scheduler = LinearAlphaScheduler()
