@@ -2,7 +2,7 @@
 
 # Checkpoint and device
 task = "arithmetic"
-checkpoint = "./checkpoints/arithmetic/final/checkpoint-400000"
+checkpoint = "./checkpoints/arithmetic/final/checkpoint-50000"
 device = "cuda"
 
 # Sampling
