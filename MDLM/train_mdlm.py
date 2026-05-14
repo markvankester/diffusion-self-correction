@@ -246,8 +246,8 @@ def main():
         loss_weight_type=args.loss_weight_type,
         loss_norm_type=args.loss_norm_type,
         remove_unused_columns=False,
-        bf16=bool(args.bf16),
-        dataloader_num_workers=args.dataloader_num_workers if args.dataloader_num_workers is not None else 0,
+        bf16=args.bf16 if args.bf16 is not None else True,
+        dataloader_num_workers=args.dataloader_num_workers if args.dataloader_num_workers is not None else 4,
     )
 
     scheduler = LinearAlphaScheduler()
