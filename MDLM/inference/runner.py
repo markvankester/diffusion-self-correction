@@ -26,7 +26,6 @@ def run_prompts(
     max_length: int = 20,
     task_name: str = "",
     solutions: list[str] | None = None,
-    strategies: list[list[int]] | None = None,
     show_steps: bool = False,
     steps_log_dir: str | os.PathLike | None = None,
 ) -> None:
@@ -87,7 +86,6 @@ def run_prompts(
                 tokenizer=tokenizer,
                 task_name=task_name,
                 solutions=solutions,
-                strategies=strategies,
                 show_steps=show_steps,
                 run_log_dir=run_log_dir,
                 metrics=sudoku_metrics,
@@ -186,7 +184,7 @@ def _run_infill(
         for pos in range(rhs_span[0], rhs_span[1]):
             revisitable_region[pos] = True
         display_prompt_ids = prompt_ids[: eq_idx + 1]
-        display_prefix = tokenizer.decode(display_prompt_ids, skip_special_tokens=True)
+        display_prefix = prompt[: prompt.rfind("=") + 1]
     else:
         zero_token_id = tokenizer.convert_tokens_to_ids("0")
         if task_name == "sudoku" and zero_token_id in prompt_ids:
@@ -215,8 +213,18 @@ def _run_infill(
     )
     generated_ids = output.sequences[0].tolist()
     start, end = rhs_span
-    answer = tokenizer.decode(generated_ids[start:end], skip_special_tokens=True).replace(" ", "")
-    return output, display_prefix + answer.strip(), display_prompt_ids
+    answer_ids = _trim_at_eos(generated_ids[start:end], tokenizer)
+    answer = tokenizer.decode(answer_ids, skip_special_tokens=True).replace(" ", "")
+    return output, display_prefix.replace(" ", "") + answer.strip(), display_prompt_ids
+
+
+def _trim_at_eos(token_ids: list[int], tokenizer) -> list[int]:
+    eos_id = getattr(tokenizer, "eos_token_id", None)
+    if eos_id is None:
+        return token_ids
+    if eos_id not in token_ids:
+        return token_ids
+    return token_ids[: token_ids.index(eos_id)]
 
 
 def _handle_sudoku_result(
@@ -227,7 +235,6 @@ def _handle_sudoku_result(
     tokenizer,
     task_name: str,
     solutions: list[str] | None,
-    strategies: list[list[int]] | None,
     show_steps: bool,
     run_log_dir: Path | None,
     metrics: SudokuMetrics,
@@ -236,7 +243,6 @@ def _handle_sudoku_result(
         return
 
     solution = solutions[idx - 1] if solutions and idx - 1 < len(solutions) else None
-    strategy_values = strategies[idx - 1] if strategies and idx - 1 < len(strategies) else None
 
     if solution:
         metrics.add(idx, prompt, solution, full_answer)
@@ -252,7 +258,6 @@ def _handle_sudoku_result(
             tokenizer=tokenizer,
             prompt=prompt,
             solution_str=solution,
-            strategy_values=strategy_values,
             puzzle_idx=idx,
             html_path=run_log_dir / f"puzzle_{idx:03d}.html",
         )

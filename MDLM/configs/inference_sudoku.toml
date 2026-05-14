@@ -2,7 +2,7 @@
 
 # Checkpoint and device
 task = "sudoku"
-checkpoint = "./checkpoints/sudoku/baseline/checkpoint-100000"
+checkpoint = "./checkpoints/sudoku/baseline/Run 2/checkpoint-200000"
 device = "cuda"
 
 # Sampling

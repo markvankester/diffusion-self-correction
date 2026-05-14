@@ -62,7 +62,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prompt_delimiter", type=str, default=None)
 
     parser.add_argument("--show_stats", action=argparse.BooleanOptionalAction, default=None)
-    parser.add_argument("--infill", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--infill", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--show_steps", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--steps_log_dir", type=str, default=None, help="Root directory for inference logs")
 
@@ -74,6 +74,7 @@ def parse_args() -> argparse.Namespace:
 
     task = get_task_adapter(args.task or "arithmetic")
     args.task = task.name
+    _resolve_infill_mode(args)
     _resolve_prompts(args, task, toml_config)
 
     if args.checkpoint is None:
@@ -82,6 +83,18 @@ def parse_args() -> argparse.Namespace:
         args.device = "auto"
 
     return args
+
+
+def _resolve_infill_mode(args: argparse.Namespace) -> None:
+    """Choose the default inference mode when the user/config did not specify one."""
+    if args.infill is not None:
+        return
+    if args.task == "sudoku":
+        args.infill = True
+    elif args.task == "arithmetic":
+        args.infill = args.remasking == "prism"
+    else:
+        args.infill = False
 
 
 def _resolve_config(args: argparse.Namespace) -> tuple[Path, dict]:
@@ -135,7 +148,6 @@ def main() -> None:
         max_length=args.max_length or 20,
         task_name=args.task,
         solutions=getattr(args, "solutions", None),
-        strategies=getattr(args, "strategies", None),
         show_steps=getattr(args, "show_steps", False),
         steps_log_dir=getattr(args, "steps_log_dir", None),
     )
@@ -155,7 +167,6 @@ def _resolve_prompts(args: argparse.Namespace, task, toml_config: dict) -> None:
         print(f"[*] Loading {num_print} prompts from dataset ({path}, mode={mode}, task={args.task})...")
         args.prompts = task.load_dataset_prompts(path, mode, num, delim)
         args.solutions = getattr(task, "_solution_strings", None)
-        args.strategies = getattr(task, "_strategy_values", None)
 
     if args.prompts:
         return

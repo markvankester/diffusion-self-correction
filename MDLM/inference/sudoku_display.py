@@ -49,7 +49,6 @@ def write_sudoku_steps_html(
     tokenizer,
     prompt: str,
     solution_str: str | None,
-    strategy_values: list[int] | None,
     puzzle_idx: int,
     html_path: str | os.PathLike,
 ) -> None:
