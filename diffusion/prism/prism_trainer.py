@@ -60,9 +60,28 @@ class PRISMTrainer(MDLMTrainer):
         if prism_head is None:
             raise ValueError("prism_head must be provided to PRISMTrainer")
         self.prism_head = prism_head
-        # Guard against duplicate metric logs when gradient accumulation is enabled.
-        # compute_loss() runs per micro-batch, but we only want one PRISM log per optimizer step.
-        self._last_prism_log_step = -1
+        # compute_loss() runs per micro-batch. Accumulate PRISM diagnostics and
+        # emit their mean alongside Trainer's own averaged train/loss log.
+        self._prism_log_sums: dict[str, float] = {}
+        self._prism_log_count = 0
+
+    def _accumulate_prism_logs(self, logs: dict[str, torch.Tensor]) -> None:
+        for key, value in logs.items():
+            self._prism_log_sums[key] = self._prism_log_sums.get(key, 0.0) + float(value.detach().cpu())
+        self._prism_log_count += 1
+
+    def log(self, logs: dict[str, float], *args, **kwargs) -> None:
+        if "loss" in logs and self._prism_log_count > 0:
+            logs = {
+                **logs,
+                **{
+                    key: value / self._prism_log_count
+                    for key, value in self._prism_log_sums.items()
+                },
+            }
+            self._prism_log_sums.clear()
+            self._prism_log_count = 0
+        super().log(logs, *args, **kwargs)
 
     def compute_loss(
         self,
@@ -136,20 +155,12 @@ class PRISMTrainer(MDLMTrainer):
 
         total_loss = prism_loss + self.args.prism_lambda * mdm_loss
 
-        current_step = int(self.state.global_step)
-        should_log = (
-            self.model.training
-            and self.args.logging_steps > 0
-            and current_step % self.args.logging_steps == 0
-            and current_step != self._last_prism_log_step
-        )
-        if should_log:
-            self.log({
-                "prism_bce_loss": prism_loss.item(),
-                "mdm_reg_loss": mdm_loss.item(),
-                "prism_total_loss": total_loss.item(),
+        if self.model.training:
+            self._accumulate_prism_logs({
+                "prism_bce_loss": prism_loss,
+                "mdm_reg_loss": mdm_loss,
+                "prism_total_loss": total_loss,
             })
-            self._last_prism_log_step = current_step
 
         return (total_loss, outputs_z) if return_outputs else total_loss
 
