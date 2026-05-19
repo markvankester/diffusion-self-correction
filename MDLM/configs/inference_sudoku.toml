@@ -3,16 +3,22 @@
 # Checkpoint and device
 task = "sudoku"
 checkpoint = "./checkpoints/sudoku/baseline/Run 2/checkpoint-200000"
-device = "cuda"
+device = "cuda"                   # Options: "cuda", "cpu", "auto"
 
 # Sampling
 steps = 16
 max_length = 81
-remasking = "low_confidence"
+remasking = "low_confidence"      # Options: "low_confidence", "random", "prism", "remdm_conf"
 
-# PRISM remasking
-prism_eta = 0.2
-prism_quality_threshold = 0.6
+# ReMDM confidence-based remasking (used when remasking = "remdm_conf")
+remdm_eta_rescale = 0.5           # Rescale factor for σ_max (0 = no remasking, 1 = full)
+remdm_eta_cap = 1.0               # Hard upper bound on σ
+remdm_ton = 0.5                   # Time t at which ReMDM turns ON (ReMDM-switch)
+remdm_toff = 0.0                  # Time t at which ReMDM turns OFF (ReMDM-switch)
+
+# PRISM remasking (used when remasking = "prism")
+prism_eta = 0.2                   # Probability of remasking a token per step
+prism_quality_threshold = 0.6     # Only remask tokens with quality below this threshold
 
 # Inference statistics
 show_stats = false
@@ -21,5 +27,5 @@ show_steps = true
 # Dataset prompts
 use_dataset = true
 dataset_path = "data/sudoku-test-data.npy"
-dataset_mode = "first"
+dataset_mode = "first"            # Options: "first", "random"
 num_prompts = 10

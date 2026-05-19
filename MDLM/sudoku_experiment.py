@@ -26,6 +26,7 @@ import torch
 from data.preprocessing.sudoku import preprocess_sudoku
 from diffusion.sampler import MDLMSampler, MDLMSamplerConfig
 from diffusion.schedules import LinearAlphaScheduler
+from diffusion.remdm import compute_initial_confidence
 from MDLM.run_inference import load_model
 
 
@@ -231,12 +232,19 @@ def forward_diffuse_corrupted_board(
     t_frac: float,
     scheduler: LinearAlphaScheduler,
     generator: torch.Generator,
-) -> tuple[list[int], list[bool], np.ndarray]:
+) -> tuple[list[int], list[bool], np.ndarray, list[int]]:
     """
     Build the partially diffused Sudoku state used for recovery inference.
 
     Clues and injected errors are kept visible. Non-clue, non-error cells are
     independently masked according to q(x_t | x_0), where p(mask)=1-alpha(t).
+
+    Returns:
+        input_ids: Token IDs for the partially masked board.
+        revisitable_region: Boolean list — True for non-clue cells.
+        free_masked: Binary array of which free cells were masked.
+        fully_visible_ids: Token IDs for the fully-visible board (no masking),
+            used by ReMDM-conf to compute initial confidence scores.
     """
     alpha_t = scheduler.alpha(t_frac)
     mask_prob = 1.0 - float(alpha_t)
@@ -244,10 +252,14 @@ def forward_diffuse_corrupted_board(
     digit_ids = digit_token_ids(tokenizer)
 
     input_ids: list[int] = []
+    fully_visible_ids: list[int] = []
     revisitable_region: list[bool] = []
     free_masked = np.zeros(81, dtype=np.int8)
 
     for pos in range(81):
+        # Fully-visible board: always use the digit (no masking)
+        fully_visible_ids.append(digit_ids[int(corrupted[pos])])
+
         if clues[pos] or error_mask[pos]:
             input_ids.append(digit_ids[int(corrupted[pos])])
         elif torch.rand((), generator=generator).item() < mask_prob:
@@ -258,7 +270,7 @@ def forward_diffuse_corrupted_board(
 
         revisitable_region.append(not bool(clues[pos]))
 
-    return input_ids, revisitable_region, free_masked
+    return input_ids, revisitable_region, free_masked, fully_visible_ids
 
 
 def load_sudoku_arrays(
@@ -309,6 +321,8 @@ def evaluate_batch(
         stochastic_transfer=args.stochastic_transfer,
         prism_eta=args.prism_eta,
         prism_quality_threshold=args.prism_quality_threshold,
+        remdm_eta_rescale=args.remdm_eta_rescale,
+        remdm_eta_cap=args.remdm_eta_cap,
         block_size=args.block_size,
         suppress_tokens=[
             token_id
@@ -334,6 +348,7 @@ def evaluate_batch(
         batch_inputs: list[list[int]] = []
         batch_revisitable: list[list[bool]] = []
         batch_free_masked: list[np.ndarray] = []
+        batch_fully_visible: list[list[int]] = []
         batch_t_fracs = timestep_rng.uniform(
             low=args.t_frac_min,
             high=args.t_frac_max,
@@ -342,7 +357,7 @@ def evaluate_batch(
 
         for local_i, idx in enumerate(batch_indices):
             t_frac = float(batch_t_fracs[local_i])
-            input_ids, revisitable, free_masked = forward_diffuse_corrupted_board(
+            input_ids, revisitable, free_masked, fully_visible_ids = forward_diffuse_corrupted_board(
                 corrupted=corrupted[idx],
                 clues=clues[idx],
                 error_mask=error_masks[idx],
@@ -354,11 +369,31 @@ def evaluate_batch(
             batch_inputs.append(input_ids)
             batch_revisitable.append(revisitable)
             batch_free_masked.append(free_masked)
+            batch_fully_visible.append(fully_visible_ids)
+
+        # Compute initial confidence scores for ReMDM-conf via a forward pass
+        # on the fully-visible boards (before masking). This gives fair ψ scores
+        # for injected error tokens that were never predicted by the model.
+        infill_kwargs: dict = {
+            "revisitable_region": batch_revisitable,
+        }
+        if args.remasking == "remdm_conf":
+            device = next(sampler.model.parameters()).device
+            fv_tensor = torch.tensor(batch_fully_visible, dtype=torch.long, device=device)
+            fv_attn = torch.ones_like(fv_tensor, dtype=torch.long)
+            rr_tensor = torch.tensor(batch_revisitable, dtype=torch.bool, device=device)
+            initial_confidence = compute_initial_confidence(
+                model=sampler.model,
+                x_full=fv_tensor,
+                attention_mask=fv_attn,
+                revisitable_region=rr_tensor,
+            )
+            infill_kwargs["initial_confidence"] = initial_confidence
 
         output = sampler.infill(
             batch_inputs,
             config=sample_config,
-            revisitable_region=batch_revisitable,
+            **infill_kwargs,
         )
 
         for local_i, idx in enumerate(batch_indices):
@@ -459,11 +494,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--remasking",
         default="random",
-        choices=["low_confidence", "random", "prism"],
+        choices=["low_confidence", "random", "prism", "remdm_conf"],
     )
     parser.add_argument("--stochastic_transfer", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--prism_eta", type=float, default=0.2)
     parser.add_argument("--prism_quality_threshold", type=float, default=None)
+    parser.add_argument("--remdm_eta_rescale", type=float, default=1.0,
+                        help="ReMDM: rescale factor for σ_max (0=no remasking, 1=full).")
+    parser.add_argument("--remdm_eta_cap", type=float, default=1.0,
+                        help="ReMDM: hard upper bound on σ.")
     parser.add_argument(
         "--visualize",
         action=argparse.BooleanOptionalAction,

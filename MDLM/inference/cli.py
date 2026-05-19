@@ -51,6 +51,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cfg_scale", type=float, default=0.0)
     parser.add_argument("--prism_eta", type=float, default=None)
     parser.add_argument("--prism_quality_threshold", type=float, default=None)
+    parser.add_argument("--remdm_eta_rescale", type=float, default=None)
+    parser.add_argument("--remdm_eta_cap", type=float, default=None)
+    parser.add_argument("--remdm_ton", type=float, default=None)
+    parser.add_argument("--remdm_toff", type=float, default=None)
 
     parser.add_argument("--prompts", type=str, nargs="+", default=None)
     parser.add_argument("--prompt_file", type=str, default=None)
@@ -192,4 +196,8 @@ def _sampler_kwargs(args: argparse.Namespace) -> dict:
         "cfg_scale": args.cfg_scale,
         "prism_eta": args.prism_eta,
         "prism_quality_threshold": args.prism_quality_threshold,
+        "remdm_eta_rescale": args.remdm_eta_rescale,
+        "remdm_eta_cap": args.remdm_eta_cap,
+        "remdm_ton": args.remdm_ton,
+        "remdm_toff": args.remdm_toff,
     }

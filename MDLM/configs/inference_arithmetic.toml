@@ -2,17 +2,23 @@
 
 # Checkpoint and device
 task = "arithmetic"
-checkpoint = "./checkpoints/arithmetic/final/checkpoint-50000"
-device = "cuda"
+checkpoint = "./checkpoints/arithmetic/final2/checkpoint-250000"
+device = "cuda"                   # Options: "cuda", "cpu", "auto"
 
 # Sampling
 steps = 16
 max_length = 20
-remasking = "low_confidence"
+remasking = "remdm_conf"      # Options: "low_confidence", "random", "prism", "remdm_conf"
 
-# PRISM remasking
-prism_eta = 0.2
-prism_quality_threshold = 0.6
+# PRISM remasking (used when remasking = "prism")
+prism_eta = 0.2                   # Probability of remasking a token per step
+prism_quality_threshold = 0.6     # Only remask tokens with quality below this threshold
+
+# ReMDM confidence-based remasking (used when remasking = "remdm_conf")
+remdm_eta_rescale = 0.2           # Rescale factor for σ_max (0 = no remasking, 1 = full)
+remdm_eta_cap = 1.0               # Hard upper bound on σ
+remdm_ton = 0.5                   # Time t at which ReMDM turns ON (ReMDM-switch)
+remdm_toff = 0.0                  # Time t at which ReMDM turns OFF (ReMDM-switch)
 
 # Inference statistics
 show_stats = true
@@ -20,7 +26,7 @@ show_steps = true
 
 # Dataset prompts
 use_dataset = true
-dataset_path = "data/arithmetic_eval.jsonl"
-dataset_mode = "first"
-num_prompts = 10
+dataset_path = "data/arithmetic_test.jsonl"
+dataset_mode = "first"           # Options: "first", "random"
+num_prompts = 0
 prompt_delimiter = "="

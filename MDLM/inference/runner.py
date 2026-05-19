@@ -11,6 +11,7 @@ from diffusion.sampler import MDLMSampler, MDLMSamplerConfig
 from diffusion.schedules import LinearAlphaScheduler
 
 from .arithmetic_metrics import ArithmeticMetrics
+from .arithmetic_display import write_arithmetic_steps_html
 from .sudoku_display import render_sudoku_grid, write_sudoku_steps_html
 from .sudoku_metrics import SudokuMetrics
 
@@ -94,9 +95,14 @@ def run_prompts(
                 idx=idx,
                 prompt=prompt,
                 full_answer=full_answer,
+                output=output,
+                tokenizer=tokenizer,
                 task_name=task_name,
                 solutions=solutions,
+                show_steps=show_steps,
+                run_log_dir=run_log_dir,
                 metrics=arithmetic_metrics,
+                display_prompt_ids=display_prompt_ids,
             )
         else:
             output = sampler.sample([prompt_ids], config=sample_config)
@@ -109,9 +115,14 @@ def run_prompts(
                 idx=idx,
                 prompt=prompt,
                 full_answer=full_answer,
+                output=output,
+                tokenizer=tokenizer,
                 task_name=task_name,
                 solutions=solutions,
+                show_steps=show_steps,
+                run_log_dir=run_log_dir,
                 metrics=arithmetic_metrics,
+                display_prompt_ids=display_prompt_ids,
             )
 
         if show_stats and output.histories is not None:
@@ -158,10 +169,8 @@ def _should_create_run_log_dir(
     show_steps: bool,
     solutions: list[str] | None,
 ) -> bool:
-    if task_name == "sudoku":
+    if task_name in ("sudoku", "arithmetic"):
         return show_steps or bool(solutions)
-    if task_name == "arithmetic":
-        return bool(solutions)
     return False
 
 
@@ -267,18 +276,38 @@ def _handle_arithmetic_result(
     idx: int,
     prompt: str,
     full_answer: str,
+    output,
+    tokenizer,
     task_name: str,
     solutions: list[str] | None,
+    show_steps: bool,
+    run_log_dir: Path | None,
     metrics: ArithmeticMetrics,
+    display_prompt_ids: list[int],
 ) -> None:
-    if task_name != "arithmetic" or not solutions or idx - 1 >= len(solutions):
+    if task_name != "arithmetic":
         return
-    metrics.add(
-        idx=idx,
-        prompt=prompt,
-        expected=solutions[idx - 1],
-        output=full_answer,
-    )
+    
+    expected_str = solutions[idx - 1] if solutions and idx - 1 < len(solutions) else None
+
+    if expected_str is not None:
+        metrics.add(
+            idx=idx,
+            prompt=prompt,
+            expected=expected_str,
+            output=full_answer,
+        )
+
+    if show_steps and output.histories is not None and run_log_dir is not None:
+        write_arithmetic_steps_html(
+            output=output,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            expected_str=expected_str,
+            task_idx=idx,
+            html_path=run_log_dir / f"task_{idx:03d}.html",
+            display_prompt_ids=display_prompt_ids,
+        )
 
 
 def _print_step_stats(output, tokenizer, display_prompt_ids: list[int], idx: int) -> None:

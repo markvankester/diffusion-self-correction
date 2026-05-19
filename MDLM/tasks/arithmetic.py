@@ -100,6 +100,9 @@ class ArithmeticTaskAdapter(TaskAdapter):
         if not lines:
             return []
 
+        if num <= 0:
+            num = len(lines)
+
         if mode == "random":
             import random
             selected = random.sample(lines, min(num, len(lines)))
