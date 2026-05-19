@@ -17,7 +17,7 @@ prism_head_dropout = 0.0
 
 # PRISM objective
 prism_lambda = 5
-prism_k = 2
+prism_k = 4
 prism_freeze_unmasking_head = true
 
 # Optimization
@@ -26,7 +26,7 @@ grad_accum = 1
 lr = 3e-4
 lr_scheduler_type = "linear"
 weight_decay = 0.0
-max_steps = 200000
+max_steps = 50000
 warmup_steps = 1000
 bf16 = true
 dataloader_num_workers = 4
