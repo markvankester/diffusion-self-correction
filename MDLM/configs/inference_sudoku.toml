@@ -28,4 +28,4 @@ show_steps = true
 use_dataset = true
 dataset_path = "data/sudoku-test-data.npy"
 dataset_mode = "first"            # Options: "first", "random"
-num_prompts = 10
+num_prompts = 0

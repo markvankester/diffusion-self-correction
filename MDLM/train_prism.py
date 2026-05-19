@@ -9,11 +9,9 @@ import sys
 import os
 import tomllib
 import argparse
-from functools import partial
 
 import torch
 import torch.nn as nn
-from datasets import load_dataset
 from transformers import DataCollatorForSeq2Seq, PreTrainedTokenizerFast
 
 # Allow running directly as a script from any working directory
@@ -25,10 +23,9 @@ from backbones.llada.model import MDLMModelLM
 from diffusion.schedules import LinearAlphaScheduler
 from diffusion.prism import PRISMHead, PRISMTrainer, PRISMConfig
 from data.processing.collators import NoAttentionMaskWrapper
-from data.processing.tokenization import tokenize_and_pad
 from MDLM.tasks import get_task_adapter
 
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "configs" / "prism.toml"
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "configs" / "prism_arithmetic.toml"
 
 def load_config_file(config_path: str | os.PathLike) -> dict:
     with open(config_path, "rb") as f:
@@ -73,9 +70,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--logging_steps", type=int,  default=None)
     parser.add_argument("--eval_strategy", type=str,  default=None)
     parser.add_argument("--eval_steps",   type=int,   default=None)
+    parser.add_argument("--eval_fraction", type=float, default=None,
+                        help="Fraction of training data used as eval split when supported by the task adapter.")
+    parser.add_argument("--eval_batch_size", type=int, default=None)
+    parser.add_argument("--bf16", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--dataloader_num_workers", type=int, default=None)
     parser.add_argument("--run_name",     type=str,   default=None)
     parser.add_argument("--time_epsilon", type=float, default=None)
     parser.add_argument("--loss_norm_type", type=str, default=None)
+    parser.add_argument("--loss_weight_type", type=str, default=None)
     parser.add_argument("--report_to",    type=str,   default=None)
     parser.add_argument("--seq_len",      type=int,   default=None)
 
@@ -89,12 +92,6 @@ def main():
     args = parse_args()
     task = get_task_adapter(args.task or "arithmetic")
     args.task = task.name
-
-    if args.task != "arithmetic":
-        raise NotImplementedError(
-            "PRISM fine-tuning is only implemented for arithmetic text datasets right now. "
-            "Sudoku training needs its own serialized dataset format first."
-        )
 
     if args.data_path is None:
         args.data_path = task.default_data_path
@@ -183,30 +180,23 @@ def main():
         prism_lambda=args.prism_lambda,
         prism_k=args.prism_k,
         prism_freeze_unmasking_head=args.prism_freeze_unmasking_head,
+        loss_weight_type=args.loss_weight_type,
         remove_unused_columns=False,
+        per_device_eval_batch_size=args.eval_batch_size if args.eval_batch_size is not None else 1024,
+        bf16=args.bf16 if args.bf16 is not None else True,
+        dataloader_num_workers=args.dataloader_num_workers if args.dataloader_num_workers is not None else 4,
     )
 
-    # Load dataset
-    split = f"train[:{args.limit_data}]" if args.limit_data and args.limit_data > 0 else "train"
-    raw_dataset = load_dataset("json", data_files=args.data_path, split=split)
-    
-    dataset = raw_dataset.map(
-        partial(tokenize_and_pad, tokenizer=tokenizer, text_field="text",
-                seq_length=seq_len, insert_eos=True, mask_until_token=args.mask_until_token),
-        batched=True,
-        remove_columns=raw_dataset.column_names,
+    print(f"  Building dataset via {task.name} adapter ({args.data_path})...")
+    dataset, eval_dataset = task.build_datasets(
+        tokenizer=tokenizer,
+        data_path=args.data_path,
+        seq_len=seq_len,
+        eval_data_path=args.eval_data_path,
+        limit_data=args.limit_data or 0,
+        mask_until_token=args.mask_until_token,
+        eval_fraction=args.eval_fraction or 0.0,
     )
-
-    if args.eval_data_path:
-        eval_raw_dataset = load_dataset("json", data_files=args.eval_data_path, split="train")
-        eval_dataset = eval_raw_dataset.map(
-            partial(tokenize_and_pad, tokenizer=tokenizer, text_field="text",
-                    seq_length=seq_len, insert_eos=True, mask_until_token=args.mask_until_token),
-            batched=True,
-            remove_columns=eval_raw_dataset.column_names,
-        )
-    else:
-        eval_dataset = None
 
     scheduler = LinearAlphaScheduler()
     
