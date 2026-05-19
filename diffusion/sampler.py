@@ -17,6 +17,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from .interfaces import DiffusionModelLike, TokenizerLike
+from .remdm import compute_sigma, confidence_reweight
 from .schedules import BaseAlphaScheduler, LinearAlphaScheduler
 
 
@@ -73,6 +74,10 @@ class MDLMSamplerConfig(BaseSamplerConfig):
     prism_eta: float = 0.0          # Probability of remasking a token (PRISM self-correction)
     prism_quality_threshold: float | None = None
     prism_single_block_infill: bool = True
+    remdm_eta_rescale: float = 1.0  # Rescale factor for σ_max (ReMDM remasking intensity)
+    remdm_eta_cap: float = 1.0      # Hard upper bound on σ (ReMDM)
+    remdm_ton: float = 1.0          # Time t at which ReMDM turns ON (ReMDM-switch)
+    remdm_toff: float = 0.0         # Time t at which ReMDM turns OFF (ReMDM-switch)
 
 
 # ---------------------------------------------------------------------------
@@ -88,16 +93,20 @@ class _StepContext:
         x: Current token sequence [B, T] — mutated in-place.
         attention_mask: Padding mask [B, T].
         unmasked_index: Boolean mask [B, T] of tokens that were never masked (for CFG).
-        revisitable_region: Boolean mask [B, T] of positions that PRISM may remask.
+        revisitable_region: Boolean mask [B, T] of positions that PRISM/ReMDM may remask.
             In sample() this is the generation region; in infill() it is original_mask_region.
         block_clamp_fn: Callable(x0_p, j) -> None that zeroes out confidence scores
             outside the current block's valid region for sample j.
-        num_transfer_tokens: [B, effective_steps] int64 tensor, or None for PRISM mode.
+        num_transfer_tokens: [B, effective_steps] int64 tensor, or None for PRISM/ReMDM mode.
         step_idx: Current step index within the block (used to index num_transfer_tokens).
-        total_steps: Total steps in this block (used to compute PRISM time fractions).
+        total_steps: Total steps in this block (used to compute PRISM/ReMDM time fractions).
         is_final_step: True on the very last step of the very last block.
         B: Batch size.
         mask_id: Token ID of the [MASK] token.
+        confidence_scores: [B, T] running ψ scores for ReMDM-conf.
+            ψ(ℓ) = model confidence at the time the token was last unmasked.
+            ∞ for masked tokens and non-revisitable (clue) positions.
+            Persisted across steps; updated when tokens are committed or remasked.
     """
     x: torch.Tensor
     attention_mask: torch.Tensor
@@ -110,6 +119,7 @@ class _StepContext:
     is_final_step: bool
     B: int
     mask_id: int
+    confidence_scores: torch.Tensor | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +166,10 @@ class MDLMSampler:
         stochastic_transfer: bool,
         prism_eta: float,
         prism_quality_threshold: float | None,
+        remdm_eta_rescale: float = 1.0,
+        remdm_eta_cap: float = 1.0,
+        remdm_ton: float = 1.0,
+        remdm_toff: float = 0.0,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]:
         """
         Execute one reverse-diffusion step, shared by sample() and infill().
@@ -227,7 +241,7 @@ class MDLMSampler:
         x0 = torch.argmax(logits_with_noise, dim=-1)
 
         # ---- 4. Per-position confidence ------------------------------------
-        if remasking in ("low_confidence", "prism"):
+        if remasking in ("low_confidence", "prism", "remdm_conf"):
             p = F.softmax(logits, dim=-1)
             x0_p = torch.gather(p, dim=-1, index=x0.unsqueeze(-1)).squeeze(-1)
         elif remasking == "random":
@@ -300,7 +314,73 @@ class MDLMSampler:
             x[transfer_index] = x0[transfer_index]
             x[remask_index] = mask_id
 
-        # ---- 5b. Standard (low_confidence / random) commit -----------------
+        # ---- 5b. ReMDM confidence-based remasking commit -------------------
+        elif remasking == "remdm_conf":
+            assert ctx.confidence_scores is not None, (
+                "remdm_conf requires confidence_scores in _StepContext"
+            )
+
+            # Compute σ for this step from the noise schedule
+            step_t = (ctx.total_steps - ctx.step_idx) / ctx.total_steps
+            prev_t = (ctx.total_steps - ctx.step_idx - 1) / ctx.total_steps
+            alpha_t = float(self.scheduler.alpha(step_t))
+            alpha_s = float(self.scheduler.alpha(prev_t))
+            sigma = compute_sigma(alpha_s, alpha_t, remdm_eta_rescale, remdm_eta_cap)
+
+            # ReMDM-switch logic
+            if step_t > remdm_ton or step_t <= remdm_toff:
+                sigma = 0.0
+
+            # Compute per-token remasking probabilities from confidence scores
+            if not ctx.is_final_step and sigma > 0:
+                sigma_per_token = confidence_reweight(
+                    sigma_base=sigma,
+                    psi_scores=ctx.confidence_scores,
+                    mask_index=mask_index,
+                    revisitable_region=ctx.revisitable_region,
+                )
+                # Sample Bernoulli for remasking
+                remask_probs = torch.rand_like(sigma_per_token)
+                remask_index = (remask_probs < sigma_per_token)
+                # Safety: never remask masked tokens or non-revisitable tokens
+                remask_index = remask_index & (~mask_index) & ctx.revisitable_region
+
+            # Determine how many masked tokens to commit
+            current_mask_region = mask_index & ctx.revisitable_region
+            reverse_transfer_prob = 1 - self.scheduler.reverse_mask_prob(s=prev_t, t=step_t)
+
+            for j in range(B):
+                n_masked = int(current_mask_region[j].sum().item())
+                if n_masked == 0:
+                    continue
+                if stochastic_transfer:
+                    base_unmask = int(
+                        torch.distributions.Binomial(
+                            torch.tensor(float(n_masked), device=x.device),
+                            torch.tensor(float(reverse_transfer_prob), device=x.device),
+                        ).sample().item()
+                    )
+                else:
+                    base_unmask = int(round(n_masked * float(reverse_transfer_prob)))
+
+                # Extra slots freed up by incoming remasks
+                extra_unmask = int(remask_index[j].sum().item())
+                k_commit = min(n_masked, base_unmask + extra_unmask)
+                if k_commit > 0:
+                    _, select_idx = torch.topk(confidence[j], k=k_commit)
+                    transfer_index[j, select_idx] = True
+
+            # Apply: commit unmasked tokens, then remask
+            x[transfer_index] = x0[transfer_index]
+            x[remask_index] = mask_id
+
+            # Update running confidence scores ψ
+            # Newly committed tokens: store their decoding confidence
+            ctx.confidence_scores[transfer_index] = x0_p[transfer_index]
+            # Remasked tokens: reset to ∞ (will be set when re-unmasked)
+            ctx.confidence_scores[remask_index] = float("inf")
+
+        # ---- 5c. Standard (low_confidence / random) commit -----------------
         else:
             assert ctx.num_transfer_tokens is not None
             for j in range(B):
@@ -356,6 +436,10 @@ class MDLMSampler:
         begin_suppress_tokens = kwargs.get("begin_suppress_tokens", config.begin_suppress_tokens)
         prism_eta = kwargs.get("prism_eta", config.prism_eta)
         prism_quality_threshold = kwargs.get("prism_quality_threshold", config.prism_quality_threshold)
+        remdm_eta_rescale = kwargs.get("remdm_eta_rescale", config.remdm_eta_rescale)
+        remdm_eta_cap = kwargs.get("remdm_eta_cap", config.remdm_eta_cap)
+        remdm_ton = kwargs.get("remdm_ton", config.remdm_ton)
+        remdm_toff = kwargs.get("remdm_toff", config.remdm_toff)
 
         assert 1 <= block_size
         assert 1 <= steps
@@ -383,6 +467,11 @@ class MDLMSampler:
 
         if remasking == "prism":
             # PRISM remasking needs the whole generated region to stay revisitable.
+            block_size = max_new_tokens
+
+        if remasking == "remdm_conf":
+            # ReMDM remasking moves masks across the full generation region,
+            # so use a single block to keep all positions revisitable.
             block_size = max_new_tokens
 
         B = len(inputs)
@@ -421,6 +510,13 @@ class MDLMSampler:
         remask_history = [] if return_dict else None
         x0_histories = [] if return_dict else None
 
+        # ReMDM confidence scores: all tokens start masked so ψ = ∞ everywhere.
+        # Scores are updated as tokens get committed during sampling.
+        confidence_scores = (
+            torch.full((B, T), float("inf"), device=x.device)
+            if remasking == "remdm_conf" else None
+        )
+
         for b in range(num_blocks):
             block_mask_index = torch.zeros(
                 (B, block_size), dtype=torch.bool, device=x.device
@@ -432,7 +528,7 @@ class MDLMSampler:
                     width = end - start
                     block_mask_index[j, :width] = (x[j, start:end] == mask_id)
 
-            if remasking == "prism":
+            if remasking in ("prism", "remdm_conf"):
                 effective_steps = base_steps
                 num_transfer_tokens = None
             else:
@@ -464,6 +560,7 @@ class MDLMSampler:
                     is_final_step=is_final_step,
                     B=B,
                     mask_id=mask_id,
+                    confidence_scores=confidence_scores if remasking == "remdm_conf" else None,
                 )
 
                 confidence, transfer_index, remask_index, x0, quality_scores = (
@@ -478,6 +575,10 @@ class MDLMSampler:
                         stochastic_transfer=stochastic_transfer,
                         prism_eta=prism_eta,
                         prism_quality_threshold=prism_quality_threshold,
+                        remdm_eta_rescale=remdm_eta_rescale,
+                        remdm_eta_cap=remdm_eta_cap,
+                        remdm_ton=remdm_ton,
+                        remdm_toff=remdm_toff,
                     )
                 )
 
@@ -520,8 +621,11 @@ class MDLMSampler:
             config: Sampler configuration, or None for defaults.
             **kwargs: Override specific config parameters.
                 revisitable_region: Optional editable-region mask [B, T] (bool).
-                    In PRISM mode this region is eligible for remasking, even if
+                    In PRISM/ReMDM mode this region is eligible for remasking, even if
                     tokens are initially unmasked.
+                initial_confidence: Optional [B, T] tensor of pre-computed ψ scores
+                    for ReMDM-conf. Use compute_initial_confidence() to get fair
+                    scores for tokens that were never predicted by the model.
 
         Returns:
             BaseSamplerOutput (if return_dict=True) or raw tensor of token IDs.
@@ -543,7 +647,12 @@ class MDLMSampler:
         prism_eta = kwargs.get("prism_eta", config.prism_eta)
         prism_quality_threshold = kwargs.get("prism_quality_threshold", config.prism_quality_threshold)
         prism_single_block_infill = kwargs.get("prism_single_block_infill", config.prism_single_block_infill)
+        remdm_eta_rescale = kwargs.get("remdm_eta_rescale", config.remdm_eta_rescale)
+        remdm_eta_cap = kwargs.get("remdm_eta_cap", config.remdm_eta_cap)
+        remdm_ton = kwargs.get("remdm_ton", config.remdm_ton)
+        remdm_toff = kwargs.get("remdm_toff", config.remdm_toff)
         revisitable_region_override = kwargs.get("revisitable_region", None)
+        initial_confidence = kwargs.get("initial_confidence", None)
 
         mask_id = self.tokenizer.mask_token_id
         bos_id = self.tokenizer.bos_token_id
@@ -571,6 +680,11 @@ class MDLMSampler:
         if remasking == "prism" and prism_single_block_infill:
             # PRISM remasking can move masks across the whole editable region.
             # Using one block ensures every remasked token stays revisitable.
+            block_size = T
+
+        if remasking == "remdm_conf":
+            # ReMDM remasking moves masks across the full editable region,
+            # so use a single block to keep all positions revisitable.
             block_size = T
 
         assert 1 <= block_size
@@ -632,6 +746,28 @@ class MDLMSampler:
         remask_history = [] if return_dict else None
         x0_histories = [] if return_dict else None
 
+        # ReMDM confidence scores initialization
+        if remasking == "remdm_conf":
+            if initial_confidence is not None:
+                # Use pre-computed confidence from an initial forward pass.
+                # This provides fair ψ scores for tokens never predicted by the model
+                # (e.g., injected errors in the sudoku experiment).
+                confidence_scores = initial_confidence.to(
+                    device=self.model.device, dtype=torch.float32
+                ).clone()
+            else:
+                # Default: ∞ everywhere. Unmasked revisitable tokens will get
+                # their scores set on the first step when they would be committed.
+                confidence_scores = torch.full(
+                    (B, T), float("inf"), device=self.model.device
+                )
+            # Ensure masked positions always have ψ = ∞
+            confidence_scores[x == mask_id] = float("inf")
+            # Ensure non-revisitable (clue) positions have ψ = ∞
+            confidence_scores[~revisitable_region] = float("inf")
+        else:
+            confidence_scores = None
+
         for b in range(num_blocks):
             start = b * block_size
             stop = min(start + block_size, T)
@@ -646,9 +782,9 @@ class MDLMSampler:
                 if width > 0:
                     block_mask_index[j, :width] = x[j, start : start + width] == mask_id
 
-            if remasking == "prism":
-                # PRISM must still run remasking steps even when the block starts
-                # fully unmasked (warm-start correction).
+            if remasking in ("prism", "remdm_conf"):
+                # PRISM/ReMDM must still run remasking steps even when the block
+                # starts fully unmasked (warm-start correction).
                 num_transfer_tokens = None
                 effective_steps = steps_per_block
             else:
@@ -685,6 +821,7 @@ class MDLMSampler:
                     is_final_step=is_final_step,
                     B=B,
                     mask_id=mask_id,
+                    confidence_scores=confidence_scores,
                 )
 
                 confidence, transfer_index, remask_index, x0, quality_scores = (
@@ -699,6 +836,10 @@ class MDLMSampler:
                         stochastic_transfer=stochastic_transfer,
                         prism_eta=prism_eta,
                         prism_quality_threshold=prism_quality_threshold,
+                        remdm_eta_rescale=remdm_eta_rescale,
+                        remdm_eta_cap=remdm_eta_cap,
+                        remdm_ton=remdm_ton,
+                        remdm_toff=remdm_toff,
                     )
                 )
 
