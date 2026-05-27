@@ -119,10 +119,11 @@ class PRISMTrainer(MDLMTrainer):
         logits_z = outputs_z.logits  # [b, l, V]
 
         # MDM regularization: (1/n) sum_{j: z_j=m} -log f_theta(x_j | z), averaged over batch
-        # n = sequence length, matching Eq. 3 / Algorithm 1 line 10.
+        # n = number of masked positions in the sequence, matching Eq. 3 / Algorithm 1 line 10.
         token_nll = F.cross_entropy(logits_z.transpose(1, 2), input_ids, reduction="none")
         token_nll = token_nll * masked_mask.to(token_nll.dtype)
-        mdm_loss = (token_nll.sum(dim=1) / l).mean()
+        n_masked = masked_mask.sum(dim=1).clamp_min(1)
+        mdm_loss = (token_nll.sum(dim=1) / n_masked).mean()
 
         # (c) Sample y using f_sg(theta)
         # .detach() implements the stop-gradient: y-sampling does not back-propagate

@@ -1,6 +1,6 @@
 # PRISM fine-tuning config for Sudoku.
 
-task = "sudoku"
+task = "sudoku"  # Options: "arithmetic", "sudoku"
 
 # Data and paths
 checkpoint = "./checkpoints/sudoku/baseline/Run 2/checkpoint-200000"
@@ -10,40 +10,21 @@ limit_data = 0
 eval_fraction = 0.05
 
 # PRISM adapter
-prism_head_type = "linear"
-prism_head_n_heads = 4
-prism_head_dropout = 0.0
+prism_head_type = "linear"          # Options: "linear", "scalar", "attention"
 
 # PRISM objective
-prism_lambda = 5
-prism_k = 4
-prism_freeze_unmasking_head = true
+prism_lambda = 5                    # Loss weighting coefficient for PRISM quality head
+prism_k = 4                         # Unmasking candidate set size
 
 # Optimization
 batch_size = 256
 grad_accum = 1
 lr = 3e-4
-lr_scheduler_type = "linear"
-weight_decay = 0.0
 max_steps = 200000
 warmup_steps = 1000
-bf16 = true
-dataloader_num_workers = 4
-
-# Diffusion loss
-loss_weight_type = "scheduler"
-loss_norm_type = "token"
-time_epsilon = 1e-3
 
 # Evaluation
-eval_strategy = "steps"
 eval_steps = 1000
-eval_batch_size = 1024
-
-# Logging and Checkpointing
-save_steps = 50000
-logging_steps = 10
 
 # Reporting
 run_name = "prism-sudoku"
-report_to = "wandb"

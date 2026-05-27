@@ -69,7 +69,8 @@ class PRISMHead(nn.Module):
         elif head_type == "linear":
             self.attn = None
             self.layer_norm = nn.LayerNorm(d_model)
-            hidden_dim = 2 * d_model
+            # Dynamically size hidden_dim to target exactly ~133k parameters
+            hidden_dim = int((133000 - 3 * d_model - 2) / (d_model + 2))
             self.mlp = nn.Sequential(
                 nn.Linear(d_model, hidden_dim),
                 nn.SiLU(),

@@ -47,39 +47,39 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval_data_path", type=str, default=None)
 
     # PRISM Hyperparameters
-    parser.add_argument("--prism_lambda", type=float, default=None)
-    parser.add_argument("--prism_k",      type=int,   default=None)
-    parser.add_argument("--prism_head_type", type=str, default=None)
-    parser.add_argument("--prism_head_n_heads", type=int, default=None)
-    parser.add_argument("--prism_head_dropout", type=float, default=None)
+    parser.add_argument("--prism_lambda", type=float, default=5.0)
+    parser.add_argument("--prism_k",      type=int,   default=4)
+    parser.add_argument("--prism_head_type", type=str, default="linear")
+    parser.add_argument("--prism_head_n_heads", type=int, default=4)
+    parser.add_argument("--prism_head_dropout", type=float, default=0.0)
     parser.add_argument(
         "--prism_freeze_unmasking_head",
         type=lambda v: str(v).lower() in {"1", "true", "yes", "on"},
-        default=None,
+        default=True,
     )
 
     # Training & Eval
-    parser.add_argument("--batch_size",   type=int,   default=None)
-    parser.add_argument("--grad_accum",   type=int,   default=None)
-    parser.add_argument("--lr",           type=float, default=None)
-    parser.add_argument("--lr_scheduler_type", type=str, default=None)
-    parser.add_argument("--weight_decay", type=float, default=None)
-    parser.add_argument("--max_steps",    type=int,   default=None)
-    parser.add_argument("--warmup_steps", type=int,   default=None)
-    parser.add_argument("--save_steps",   type=int,   default=None)
-    parser.add_argument("--logging_steps", type=int,  default=None)
-    parser.add_argument("--eval_strategy", type=str,  default=None)
-    parser.add_argument("--eval_steps",   type=int,   default=None)
-    parser.add_argument("--eval_fraction", type=float, default=None,
+    parser.add_argument("--batch_size",   type=int,   default=256)
+    parser.add_argument("--grad_accum",   type=int,   default=1)
+    parser.add_argument("--lr",           type=float, default=3e-4)
+    parser.add_argument("--lr_scheduler_type", type=str, default="linear")
+    parser.add_argument("--weight_decay", type=float, default=0.0)
+    parser.add_argument("--max_steps",    type=int,   default=50000)
+    parser.add_argument("--warmup_steps", type=int,   default=1000)
+    parser.add_argument("--save_steps",   type=int,   default=50000)
+    parser.add_argument("--logging_steps", type=int,  default=10)
+    parser.add_argument("--eval_strategy", type=str,  default="steps")
+    parser.add_argument("--eval_steps",   type=int,   default=1000)
+    parser.add_argument("--eval_fraction", type=float, default=0.0,
                         help="Fraction of training data used as eval split when supported by the task adapter.")
-    parser.add_argument("--eval_batch_size", type=int, default=None)
-    parser.add_argument("--bf16", action=argparse.BooleanOptionalAction, default=None)
-    parser.add_argument("--dataloader_num_workers", type=int, default=None)
+    parser.add_argument("--eval_batch_size", type=int, default=1024)
+    parser.add_argument("--bf16", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--dataloader_num_workers", type=int, default=4)
     parser.add_argument("--run_name",     type=str,   default=None)
-    parser.add_argument("--time_epsilon", type=float, default=None)
-    parser.add_argument("--loss_norm_type", type=str, default=None)
-    parser.add_argument("--loss_weight_type", type=str, default=None)
-    parser.add_argument("--report_to",    type=str,   default=None)
+    parser.add_argument("--time_epsilon", type=float, default=1e-3)
+    parser.add_argument("--loss_norm_type", type=str, default="token")
+    parser.add_argument("--loss_weight_type", type=str, default="scheduler")
+    parser.add_argument("--report_to",    type=str,   default="wandb")
     parser.add_argument("--seq_len",      type=int,   default=None)
 
     # Load TOML first, then let CLI flags override
