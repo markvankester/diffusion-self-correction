@@ -11,8 +11,9 @@ limit_data = 0
 mask_until_token = "="
 
 # BackPlay adapter
-backplay_delta_t = 0.0625                         # Rollback step size (e.g. 0.0625 = 1/16, 0.03125 = 1/32)
-backplay_loss_scope = "artifact"                  # Options: "non_mask", "artifact", "all"
+backplay_head_type = "linear"                    # Options: "linear", "scalar", "attention"
+backplay_delta_t = 0.125                         # Rollback step size (e.g. 0.0625 = 1/16, 0.03125 = 1/32)
+backplay_loss_scope = "non-mask"                  # Options: "non_mask", "artifact", "all"
 
 # Optimization
 batch_size = 256

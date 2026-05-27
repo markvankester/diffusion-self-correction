@@ -4,4 +4,4 @@
 #   "arithmetic" -> MDLM/configs/inference_arithmetic.toml
 #   "sudoku"     -> MDLM/configs/inference_sudoku.toml
 
-task = "sudoku"
+task = "arithmetic"

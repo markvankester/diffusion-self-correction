@@ -155,7 +155,7 @@ class PRISMTrainer(MDLMTrainer):
             inputs.get("attention_mask", None),
         )
         b, l = input_ids.shape
-        maskable_mask = self._valid_training_mask(input_ids, labels, attention_mask)
+        maskable_mask = labels != -100
 
         # (a) Sample (x, z)
         t, masked_mask, z = self._sample_diffusion_mask(input_ids, maskable_mask)
@@ -176,8 +176,7 @@ class PRISMTrainer(MDLMTrainer):
         # .detach() implements the stop-gradient: y-sampling does not back-propagate
         # through the backbone, while the MDM loss above (f_theta) does.
         prism_k = self.args.prism_k
-        artifact_logits_z = self._suppress_artifact_special_tokens(logits_z.detach())
-        probs_z = F.softmax(artifact_logits_z, dim=-1)  # [b, l, V]
+        probs_z = F.softmax(logits_z.detach(), dim=-1)  # [b, l, V]
 
         y = z.clone()
         sampled_indices_mask = torch.zeros_like(masked_mask)
@@ -211,12 +210,8 @@ class PRISMTrainer(MDLMTrainer):
                 "prism_bce_loss": prism_loss,
                 "mdm_reg_loss": mdm_loss,
                 "prism_total_loss": total_loss,
-                "prism_quality_accuracy": metrics["accuracy"],
-                "prism_quality_positive_rate": metrics["positive_rate"],
-                "prism_quality_precision": metrics["precision"],
                 "prism_quality_recall": metrics["recall"],
                 "prism_quality_f1": metrics["f1"],
-                "prism_quality_balanced_accuracy": metrics["balanced_accuracy"],
                 "prism_pos_score_mean": metrics["pos_score_mean"],
                 "prism_neg_score_mean": metrics["neg_score_mean"],
             })

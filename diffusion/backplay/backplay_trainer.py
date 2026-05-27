@@ -223,7 +223,6 @@ class BackPlayTrainer(MDLMTrainer):
         if self.model.training:
             with torch.no_grad():
                 metrics = _binary_detection_metrics(error_probs, error_labels, loss_mask)
-                artifact_rate = artifact_mask.sum().float() / maskable_mask.sum().clamp_min(1)
                 artifact_error_rate = (
                     error_labels[artifact_mask].mean()
                     if artifact_mask.any()
@@ -232,15 +231,10 @@ class BackPlayTrainer(MDLMTrainer):
             self._accumulate_backplay_logs(
                 {
                     "backplay_bce_loss": loss,
-                    "backplay_error_accuracy": metrics["accuracy"],
-                    "backplay_error_positive_rate": metrics["positive_rate"],
-                    "backplay_error_precision": metrics["precision"],
                     "backplay_error_recall": metrics["recall"],
                     "backplay_error_f1": metrics["f1"],
-                    "backplay_balanced_accuracy": metrics["balanced_accuracy"],
                     "backplay_pos_prob_mean": metrics["pos_prob_mean"],
                     "backplay_neg_prob_mean": metrics["neg_prob_mean"],
-                    "backplay_artifact_rate": artifact_rate,
                     "backplay_artifact_error_rate": artifact_error_rate,
                 }
             )

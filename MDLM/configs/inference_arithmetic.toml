@@ -3,7 +3,8 @@
 # Checkpoint and device
 task = "arithmetic"
 #checkpoint = "./checkpoints/arithmetic/final2/checkpoint-250000"
-checkpoint = "./checkpoints/arithmetic/prism2/checkpoint-50000"     # PRISM Checkpoint
+checkpoint = "./checkpoints/arithmetic/prism/checkpoint-100000"     # PRISM Checkpoint
+#checkpoint = "./checkpoints/arithmetic/backplay/checkpoint-250000"    # BackPlay Checkpoint
 device = "cuda"                   # Options: "cuda", "cpu", "auto"
 
 # Sampling
@@ -23,7 +24,7 @@ prism_quality_threshold = 0.6     # Only remask tokens with quality below this t
 
 # BackPlay remasking (used when remasking = "backplay")
 backplay_budget = 2
-backplay_threshold = 0.75
+backplay_threshold = 0.3
 backplay_stride = 4
 backplay_block_buffer = 4
 
@@ -35,5 +36,5 @@ show_steps = true
 use_dataset = true
 dataset_path = "data/arithmetic_test_corrupted.jsonl"
 dataset_mode = "first"           # Options: "first", "random"
-num_prompts = 0
+num_prompts = 100
 prompt_delimiter = "="

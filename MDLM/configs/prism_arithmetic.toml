@@ -15,7 +15,7 @@ prism_head_type = "linear"          # Options: "linear", "scalar", "attention"
 
 # PRISM objective
 prism_lambda = 5                    # Loss weighting coefficient for PRISM quality head
-prism_k = 1                         # Unmasking candidate set size
+prism_k = 4                         # Unmasking candidate set size
 
 # Optimization
 batch_size = 256

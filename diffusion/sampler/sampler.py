@@ -96,9 +96,6 @@ class MDLMSampler:
             if hidden_states is None:
                 raise RuntimeError("PRISM remasking requires hidden states from the backbone")
             is_clean = (x != mask_id) & attention_mask.bool() & ctx.revisitable_region
-            pad_id = getattr(self.tokenizer, "pad_token_id", None)
-            if pad_id is not None:
-                is_clean = is_clean & (x != pad_id)
             if is_clean.any():
                 quality_scores = self.prism_head(hidden_states, attention_mask=attention_mask)
                 n_clean = is_clean.sum(dim=1)
