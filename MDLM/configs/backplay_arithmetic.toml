@@ -13,7 +13,7 @@ mask_until_token = "="
 # BackPlay adapter
 backplay_head_type = "linear"                    # Options: "linear", "scalar", "attention"
 backplay_delta_t = 0.2
-backplay_loss_scope = "non-mask"                  # Options: "non_mask", "artifact", "all"
+backplay_loss_scope = "non_mask"                  # Options: "non_mask", "artifact", "all"
 
 # Optimization
 batch_size = 256
