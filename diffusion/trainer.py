@@ -146,6 +146,37 @@ class MDLMTrainer(transformers.Trainer):
         )
         return t, masked_mask, noised_input_ids
 
+    def _valid_training_mask(
+        self,
+        input_ids: torch.Tensor,
+        labels: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Positions eligible for diffusion/correction losses."""
+        valid_mask = labels != -100
+        pad_id = getattr(self.processing_class, "pad_token_id", None)
+        if pad_id is not None:
+            valid_mask = valid_mask & (input_ids != pad_id)
+        if attention_mask is not None:
+            valid_mask = valid_mask & attention_mask.bool()
+        return valid_mask
+
+    def _suppress_artifact_special_tokens(self, logits: torch.Tensor) -> torch.Tensor:
+        """Prevent correction-artifact sampling from producing impossible tokens."""
+        suppressed_ids = []
+        for name in ("pad_token_id", "mask_token_id"):
+            token_id = getattr(self.processing_class, name, None)
+            if token_id is not None:
+                suppressed_ids.append(int(token_id))
+        if not suppressed_ids:
+            return logits
+        logits = logits.clone()
+        ids = torch.as_tensor(sorted(set(suppressed_ids)), device=logits.device, dtype=torch.long)
+        ids = ids[(ids >= 0) & (ids < logits.size(-1))]
+        if ids.numel() > 0:
+            logits[..., ids] = -torch.inf
+        return logits
+
     def compute_loss(
         self,
         model: DiffusionModelLike | nn.Module,

@@ -16,6 +16,54 @@ from ..trainer import MDLMConfig, MDLMTrainer
 from .backplay_head import BackPlayHead
 
 
+def _binary_detection_metrics(
+    probs: torch.Tensor,
+    labels: torch.Tensor,
+    mask: torch.Tensor,
+    threshold: float = 0.5,
+) -> dict[str, torch.Tensor]:
+    active_probs = probs[mask]
+    active_labels = labels[mask].bool()
+    if active_labels.numel() == 0:
+        zero = probs.new_tensor(0.0)
+        return {
+            "accuracy": zero,
+            "positive_rate": zero,
+            "precision": zero,
+            "recall": zero,
+            "f1": zero,
+            "balanced_accuracy": zero,
+            "pos_prob_mean": zero,
+            "neg_prob_mean": zero,
+        }
+
+    pred = active_probs > threshold
+    tp = (pred & active_labels).sum().float()
+    tn = ((~pred) & (~active_labels)).sum().float()
+    fp = (pred & (~active_labels)).sum().float()
+    fn = ((~pred) & active_labels).sum().float()
+    pos_count = active_labels.sum().float()
+    neg_count = (~active_labels).sum().float()
+
+    precision = tp / (tp + fp).clamp_min(1)
+    recall = tp / (tp + fn).clamp_min(1)
+    specificity = tn / (tn + fp).clamp_min(1)
+    f1 = 2 * precision * recall / (precision + recall).clamp_min(1e-8)
+    pos_probs = active_probs[active_labels]
+    neg_probs = active_probs[~active_labels]
+
+    return {
+        "accuracy": (tp + tn) / active_labels.numel(),
+        "positive_rate": pos_count / active_labels.numel(),
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "balanced_accuracy": 0.5 * (recall + specificity),
+        "pos_prob_mean": pos_probs.mean() if pos_probs.numel() > 0 else probs.new_tensor(0.0),
+        "neg_prob_mean": neg_probs.mean() if neg_probs.numel() > 0 else probs.new_tensor(0.0),
+    }
+
+
 @dataclass
 class BackPlayConfig(MDLMConfig):
     backplay_delta_t: float = 1 / 32
@@ -102,18 +150,19 @@ class BackPlayTrainer(MDLMTrainer):
         with torch.no_grad():
             outputs_u = model(input_ids=xu, attention_mask=attention_mask)
             outputs_u = self._postprocess_outputs(outputs_u)
-            logits_u = outputs_u.logits
+            logits_u = self._suppress_artifact_special_tokens(outputs_u.logits)
             probs_u = F.softmax(logits_u, dim=-1)
             sampled = torch.multinomial(probs_u.reshape(-1, probs_u.size(-1)), num_samples=1).view(b, l)
             sampled_p = torch.gather(probs_u, dim=-1, index=sampled.unsqueeze(-1)).squeeze(-1)
 
         artifact_mask = torch.zeros_like(maskable_mask)
-        k = max(1, math.ceil(l * delta_t))
         for row in range(b):
-            eligible = xu_mask[row] & maskable_mask[row]
+            eligible = extra_mask[row] & maskable_mask[row]
             n_eligible = int(eligible.sum().item())
             if n_eligible == 0:
                 continue
+            valid_len = int(maskable_mask[row].sum().item())
+            k = max(1, math.ceil(valid_len * delta_t))
             k_row = min(k, n_eligible)
             scores = sampled_p[row].clone()
             scores[~eligible] = -torch.inf
@@ -138,7 +187,7 @@ class BackPlayTrainer(MDLMTrainer):
             inputs["labels"],
             inputs.get("attention_mask", None),
         )
-        maskable_mask = labels != -100
+        maskable_mask = self._valid_training_mask(input_ids, labels, attention_mask)
 
         zt, artifact_mask, _ = self._sample_lbc_pair(model, input_ids, maskable_mask, attention_mask)
 
@@ -149,7 +198,6 @@ class BackPlayTrainer(MDLMTrainer):
 
         error_probs = self.backplay_head(hidden_states, attention_mask=attention_mask)
         error_labels = (zt != input_ids).float()
-        bce = F.binary_cross_entropy(error_probs, error_labels, reduction="none")
 
         if self.args.backplay_loss_scope == "artifact":
             loss_mask = artifact_mask
@@ -158,19 +206,42 @@ class BackPlayTrainer(MDLMTrainer):
         else:
             loss_mask = maskable_mask
 
-        loss = (bce * loss_mask.float()).sum() / loss_mask.sum().clamp_min(1)
+        # Class-balanced BCE: upweight the error=1 class to counteract the
+        # severe imbalance where most artifact positions are correct predictions.
+        # With pos_weight = n_neg / n_pos, both classes contribute equally to the loss
+        # regardless of their ratio, preventing collapse to "predict 0 everywhere".
+        masked_labels = error_labels[loss_mask]
+        n_pos = masked_labels.sum().clamp_min(1)
+        n_neg = (1 - masked_labels).sum().clamp_min(1)
+        pos_weight = n_neg / n_pos  # scalar: weight for error=1 class
+        # Apply per-token: error positions get pos_weight, clean positions get 1
+        token_weight = torch.where(error_labels.bool(), pos_weight, torch.ones_like(error_probs))
+        bce = F.binary_cross_entropy(error_probs, error_labels, reduction="none")
+        effective_weight = token_weight * loss_mask.float()
+        loss = (bce * effective_weight).sum() / effective_weight.sum().clamp_min(1)
 
         if self.model.training:
             with torch.no_grad():
-                pred = error_probs > 0.5
-                correct = (pred == error_labels.bool()) & loss_mask
-                acc = correct.sum().float() / loss_mask.sum().clamp_min(1)
+                metrics = _binary_detection_metrics(error_probs, error_labels, loss_mask)
                 artifact_rate = artifact_mask.sum().float() / maskable_mask.sum().clamp_min(1)
+                artifact_error_rate = (
+                    error_labels[artifact_mask].mean()
+                    if artifact_mask.any()
+                    else error_probs.new_tensor(0.0)
+                )
             self._accumulate_backplay_logs(
                 {
                     "backplay_bce_loss": loss,
-                    "backplay_error_accuracy": acc,
+                    "backplay_error_accuracy": metrics["accuracy"],
+                    "backplay_error_positive_rate": metrics["positive_rate"],
+                    "backplay_error_precision": metrics["precision"],
+                    "backplay_error_recall": metrics["recall"],
+                    "backplay_error_f1": metrics["f1"],
+                    "backplay_balanced_accuracy": metrics["balanced_accuracy"],
+                    "backplay_pos_prob_mean": metrics["pos_prob_mean"],
+                    "backplay_neg_prob_mean": metrics["neg_prob_mean"],
                     "backplay_artifact_rate": artifact_rate,
+                    "backplay_artifact_error_rate": artifact_error_rate,
                 }
             )
 

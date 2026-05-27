@@ -24,6 +24,53 @@ from ..schedules import BaseAlphaScheduler, LinearAlphaScheduler
 from .prism_head import PRISMHead
 
 
+def _quality_detection_metrics(
+    scores: torch.Tensor,
+    labels: torch.Tensor,
+    mask: torch.Tensor,
+    threshold: float = 0.5,
+) -> dict[str, torch.Tensor]:
+    active_scores = scores[mask]
+    active_labels = labels[mask].bool()
+    if active_labels.numel() == 0:
+        zero = scores.new_tensor(0.0)
+        return {
+            "accuracy": zero,
+            "positive_rate": zero,
+            "precision": zero,
+            "recall": zero,
+            "f1": zero,
+            "balanced_accuracy": zero,
+            "pos_score_mean": zero,
+            "neg_score_mean": zero,
+        }
+
+    pred = active_scores > threshold
+    tp = (pred & active_labels).sum().float()
+    tn = ((~pred) & (~active_labels)).sum().float()
+    fp = (pred & (~active_labels)).sum().float()
+    fn = ((~pred) & active_labels).sum().float()
+    pos_count = active_labels.sum().float()
+
+    precision = tp / (tp + fp).clamp_min(1)
+    recall = tp / (tp + fn).clamp_min(1)
+    specificity = tn / (tn + fp).clamp_min(1)
+    f1 = 2 * precision * recall / (precision + recall).clamp_min(1e-8)
+    pos_scores = active_scores[active_labels]
+    neg_scores = active_scores[~active_labels]
+
+    return {
+        "accuracy": (tp + tn) / active_labels.numel(),
+        "positive_rate": pos_count / active_labels.numel(),
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "balanced_accuracy": 0.5 * (recall + specificity),
+        "pos_score_mean": pos_scores.mean() if pos_scores.numel() > 0 else scores.new_tensor(0.0),
+        "neg_score_mean": neg_scores.mean() if neg_scores.numel() > 0 else scores.new_tensor(0.0),
+    }
+
+
 @dataclass
 class PRISMConfig(MDLMConfig):
     """Configuration for PRISM fine-tuning, extending the MDM trainer config."""
@@ -108,7 +155,7 @@ class PRISMTrainer(MDLMTrainer):
             inputs.get("attention_mask", None),
         )
         b, l = input_ids.shape
-        maskable_mask = labels != -100
+        maskable_mask = self._valid_training_mask(input_ids, labels, attention_mask)
 
         # (a) Sample (x, z)
         t, masked_mask, z = self._sample_diffusion_mask(input_ids, maskable_mask)
@@ -129,7 +176,8 @@ class PRISMTrainer(MDLMTrainer):
         # .detach() implements the stop-gradient: y-sampling does not back-propagate
         # through the backbone, while the MDM loss above (f_theta) does.
         prism_k = self.args.prism_k
-        probs_z = F.softmax(logits_z.detach(), dim=-1)  # [b, l, V]
+        artifact_logits_z = self._suppress_artifact_special_tokens(logits_z.detach())
+        probs_z = F.softmax(artifact_logits_z, dim=-1)  # [b, l, V]
 
         y = z.clone()
         sampled_indices_mask = torch.zeros_like(masked_mask)
@@ -157,10 +205,20 @@ class PRISMTrainer(MDLMTrainer):
         total_loss = prism_loss + self.args.prism_lambda * mdm_loss
 
         if self.model.training:
+            with torch.no_grad():
+                metrics = _quality_detection_metrics(quality_scores, binary_labels, sampled_indices_mask)
             self._accumulate_prism_logs({
                 "prism_bce_loss": prism_loss,
                 "mdm_reg_loss": mdm_loss,
                 "prism_total_loss": total_loss,
+                "prism_quality_accuracy": metrics["accuracy"],
+                "prism_quality_positive_rate": metrics["positive_rate"],
+                "prism_quality_precision": metrics["precision"],
+                "prism_quality_recall": metrics["recall"],
+                "prism_quality_f1": metrics["f1"],
+                "prism_quality_balanced_accuracy": metrics["balanced_accuracy"],
+                "prism_pos_score_mean": metrics["pos_score_mean"],
+                "prism_neg_score_mean": metrics["neg_score_mean"],
             })
 
         return (total_loss, outputs_z) if return_outputs else total_loss
