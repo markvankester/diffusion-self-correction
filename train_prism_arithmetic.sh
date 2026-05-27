@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=prism_arithmetic
-#SBATCH --time=04:00:00
+#SBATCH --time=08:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=gpu_a100
