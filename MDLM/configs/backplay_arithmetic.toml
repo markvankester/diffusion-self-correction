@@ -1,0 +1,28 @@
+# BackPlay correction-head training config for arithmetic.
+
+task = "arithmetic"  # Options: "arithmetic", "sudoku"
+
+# Data and paths
+checkpoint = "./checkpoints/arithmetic/final2/checkpoint-250000"
+data_path = "data/arithmetic_train.jsonl"
+eval_data_path = "data/arithmetic_eval.jsonl"
+output_dir = "./checkpoints/arithmetic/backplay"
+limit_data = 0
+mask_until_token = "="
+
+# BackPlay adapter
+backplay_delta_t = 0.0625                         # Rollback step size (e.g. 0.0625 = 1/16, 0.03125 = 1/32)
+backplay_loss_scope = "non_mask"                  # Options: "non_mask", "artifact", "all"
+
+# Optimization
+batch_size = 256
+grad_accum = 1
+lr = 3e-4
+max_steps = 50000
+warmup_steps = 1000
+
+# Evaluation
+eval_steps = 1000
+
+# Reporting
+run_name = "backplay-arithmetic"
