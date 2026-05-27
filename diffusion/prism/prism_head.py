@@ -23,6 +23,7 @@ class PRISMHeadConfig:
     head_type: str = "attention"
     n_heads: int = 4
     dropout: float = 0.0
+    hidden_dim: int | None = None  # Only used for head_type="linear"; stored for checkpoint compatibility
 
 
 class PRISMHead(nn.Module):
@@ -44,18 +45,13 @@ class PRISMHead(nn.Module):
         n_heads: int | None = 4,
         dropout: float | None = 0.0,
         head_type: str = "attention",
+        hidden_dim: int | None = None,
     ):
         super().__init__()
         if n_heads is None:
             n_heads = 4
         if dropout is None:
             dropout = 0.0
-        self.config = PRISMHeadConfig(
-            d_model=d_model,
-            head_type=head_type,
-            n_heads=n_heads,
-            dropout=dropout,
-        )
 
         if head_type == "attention":
             self.attn = nn.MultiheadAttention(
@@ -69,8 +65,9 @@ class PRISMHead(nn.Module):
         elif head_type == "linear":
             self.attn = None
             self.layer_norm = nn.LayerNorm(d_model)
-            # Dynamically size hidden_dim to target exactly ~133k parameters
-            hidden_dim = int((133000 - 3 * d_model - 2) / (d_model + 2))
+            # Use saved hidden_dim if provided (for checkpoint compatibility), else compute from formula
+            if hidden_dim is None:
+                hidden_dim = int((133000 - 3 * d_model - 2) / (d_model + 2))
             self.mlp = nn.Sequential(
                 nn.Linear(d_model, hidden_dim),
                 nn.SiLU(),
@@ -82,6 +79,14 @@ class PRISMHead(nn.Module):
             self.mlp = None
         else:
             raise ValueError(f"Unsupported PRISM head type: {head_type}")
+
+        self.config = PRISMHeadConfig(
+            d_model=d_model,
+            head_type=head_type,
+            n_heads=n_heads,
+            dropout=dropout,
+            hidden_dim=hidden_dim,
+        )
 
         self.proj = nn.Linear(d_model, 1)
 
