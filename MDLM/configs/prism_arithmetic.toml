@@ -21,8 +21,8 @@ prism_k = 4                         # Unmasking candidate set size
 batch_size = 256
 grad_accum = 1
 lr = 3e-4
-max_steps = 50000
-warmup_steps = 1000
+max_steps = 400000
+warmup_steps = 2000
 
 # Evaluation
 eval_steps = 1000
