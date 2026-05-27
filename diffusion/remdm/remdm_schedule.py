@@ -76,10 +76,7 @@ def confidence_reweight(
 
     For each unmasked, revisitable token ℓ:
         η_conf(ℓ) = exp(-ψ(ℓ)) / Σ_{ℓ'} exp(-ψ(ℓ'))
-        σ(ℓ) = η_conf(ℓ) · σ_base · L
-
-    where L is the count of unmasked revisitable tokens (per sample),
-    ensuring the total expected remasking count ≈ σ_base · L.
+        σ(ℓ) = η_conf(ℓ) · σ_base
 
     Tokens with low ψ (low confidence) get higher σ(ℓ).
     Masked tokens and non-revisitable tokens get σ(ℓ) = 0.
@@ -102,9 +99,6 @@ def confidence_reweight(
     if sigma_base <= 0 or not eligible.any():
         return torch.zeros(B, T, device=device)
 
-    # Count of eligible tokens per sample
-    L = eligible.sum(dim=1, keepdim=True).float()  # [B, 1]
-
     # Compute softmax(-ψ) over eligible tokens only.
     # Set ineligible positions to -inf so they get zero weight in softmax.
     neg_psi = -psi_scores.clone()
@@ -113,8 +107,8 @@ def confidence_reweight(
     # softmax across sequence dimension
     eta_conf = F.softmax(neg_psi, dim=1)  # [B, T]
 
-    # Per-token σ(ℓ) = η_conf(ℓ) · σ_base · L
-    sigma_per_token = eta_conf * sigma_base * L  # [B, T]
+    # Per-token σ(ℓ) = η_conf(ℓ) · σ_base
+    sigma_per_token = eta_conf * sigma_base  # [B, T]
 
     # Zero out ineligible positions and clamp
     sigma_per_token[~eligible] = 0.0
