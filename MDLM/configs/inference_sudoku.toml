@@ -8,7 +8,7 @@ device = "cuda"                   # Options: "cuda", "cpu", "auto"
 # Sampling
 steps = 16
 max_length = 81
-remasking = "low_confidence"      # Options: "low_confidence", "random", "prism", "remdm_conf"
+remasking = "low_confidence"      # Options: "low_confidence", "random", "prism", "backplay", "remdm_conf"
 
 # ReMDM confidence-based remasking (used when remasking = "remdm_conf")
 remdm_eta_rescale = 0.5           # Rescale factor for σ_max (0 = no remasking, 1 = full)
@@ -20,6 +20,12 @@ remdm_toff = 0.0                  # Time t at which ReMDM turns OFF (ReMDM-switc
 prism_eta = 0.2                   # Probability of remasking a token per step
 prism_quality_threshold = 0.6     # Only remask tokens with quality below this threshold
 
+# BackPlay remasking (used when remasking = "backplay")
+backplay_budget = 2
+backplay_threshold = 0.75
+backplay_stride = 4
+backplay_block_buffer = 4
+
 # Inference statistics
 show_stats = false
 show_steps = true
@@ -28,4 +34,4 @@ show_steps = true
 use_dataset = true
 dataset_path = "data/sudoku-test-data.npy"
 dataset_mode = "first"            # Options: "first", "random"
-num_prompts = 0
+num_prompts = 10000

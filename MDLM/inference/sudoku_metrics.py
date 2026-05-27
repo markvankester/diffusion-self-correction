@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .remasking_metrics import RemaskingMetrics
+
 
 @dataclass
 class SudokuMetrics:
@@ -11,8 +13,16 @@ class SudokuMetrics:
     total_exact_matches: int = 0
     total_cell_matches: int = 0
     total_cells_to_fill: int = 0
+    remasking: RemaskingMetrics = field(default_factory=RemaskingMetrics)
 
-    def add(self, idx: int, prompt: str, solution: str, output: str) -> None:
+    def add(
+        self,
+        idx: int,
+        prompt: str,
+        solution: str,
+        output: str,
+        remasking_metrics: dict | None = None,
+    ) -> None:
         board_match = output == solution
         cell_matches = 0
         cells_to_fill = 0
@@ -26,7 +36,7 @@ class SudokuMetrics:
         self.total_cell_matches += cell_matches
         self.total_cells_to_fill += cells_to_fill
 
-        self.puzzles.append({
+        row = {
             "puzzle_idx": idx,
             "prompt": prompt,
             "solution": solution,
@@ -35,7 +45,11 @@ class SudokuMetrics:
             "cell_matches": cell_matches,
             "cells_to_fill": cells_to_fill,
             "cell_accuracy": cell_matches / max(1, cells_to_fill) * 100,
-        })
+        }
+        if remasking_metrics is not None:
+            self.remasking.add(remasking_metrics)
+            row["remasking_metrics"] = remasking_metrics
+        self.puzzles.append(row)
 
     def write(self, metrics_path: Path) -> None:
         total_puzzles = len(self.puzzles)
@@ -50,6 +64,7 @@ class SudokuMetrics:
                 "total_exact_matches": self.total_exact_matches,
                 "total_cell_matches": self.total_cell_matches,
                 "total_cells_to_fill": self.total_cells_to_fill,
+                "remasking": self.remasking.summary(),
             },
             "puzzles": self.puzzles,
         }
@@ -68,4 +83,27 @@ class SudokuMetrics:
         print(f"  Total Puzzles: {total_puzzles}")
         print(f"  Board-Level Accuracy: {board_acc:.1f}% ({self.total_exact_matches}/{total_puzzles})")
         print(f"  Cell-Level Accuracy : {cell_acc:.1f}% ({self.total_cell_matches}/{self.total_cells_to_fill})")
+        remasking = self.remasking.summary()
+        if remasking["correct_cell_opportunity_count"] or remasking["model_generated_error_count"]:
+            false_pct = remasking["false_remasked_cell_pct"]
+            model_pct = remasking["model_generated_error_remasked_pct"]
+            print(
+                "  False Remasking   : "
+                f"{_fmt_pct(false_pct)} "
+                f"({remasking['false_remasked_cell_count']}/{remasking['correct_cell_opportunity_count']})"
+            )
+            print(
+                "  Model Error Remask: "
+                f"{_fmt_pct(model_pct)} "
+                f"({remasking['model_generated_error_remasked_count']}/{remasking['model_generated_error_count']}), "
+                f"avg step {_fmt_num(remasking['model_generated_error_avg_first_remask_step'])}"
+            )
         print(f"{'=' * 60}")
+
+
+def _fmt_pct(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.1f}%"
+
+
+def _fmt_num(value: float | int | None) -> str:
+    return "n/a" if value is None else f"{float(value):.2f}"

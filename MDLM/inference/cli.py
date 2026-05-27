@@ -51,6 +51,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cfg_scale", type=float, default=0.0)
     parser.add_argument("--prism_eta", type=float, default=None)
     parser.add_argument("--prism_quality_threshold", type=float, default=None)
+    parser.add_argument("--backplay_budget", type=int, default=None)
+    parser.add_argument("--backplay_threshold", type=float, default=None)
+    parser.add_argument("--backplay_stride", type=int, default=None)
+    parser.add_argument("--backplay_block_buffer", type=int, default=None)
     parser.add_argument("--remdm_eta_rescale", type=float, default=None)
     parser.add_argument("--remdm_eta_cap", type=float, default=None)
     parser.add_argument("--remdm_ton", type=float, default=None)
@@ -96,7 +100,7 @@ def _resolve_infill_mode(args: argparse.Namespace) -> None:
     if args.task == "sudoku":
         args.infill = True
     elif args.task == "arithmetic":
-        args.infill = args.remasking == "prism"
+        args.infill = args.remasking is not None
     else:
         args.infill = False
 
@@ -136,10 +140,12 @@ def main() -> None:
         print(f"Please specify a valid --checkpoint or update {args.config}")
         return
 
-    tokenizer, model, prism_head = load_model(args.checkpoint, device)
+    tokenizer, model, prism_head, backplay_head = load_model(args.checkpoint, device)
     print(f"[*] Model loaded - {sum(p.numel() for p in model.parameters()):,} parameters")
     if prism_head:
         print(f"[*] PRISM head loaded - {prism_head.num_parameters():,} parameters")
+    if backplay_head:
+        print(f"[*] BackPlay head loaded - {backplay_head.num_parameters():,} parameters")
 
     run_prompts(
         args.prompts,
@@ -149,6 +155,7 @@ def main() -> None:
         show_stats=getattr(args, "show_stats", False),
         infill=getattr(args, "infill", False),
         prism_head=prism_head,
+        backplay_head=backplay_head,
         max_length=args.max_length or 20,
         task_name=args.task,
         solutions=getattr(args, "solutions", None),
@@ -196,6 +203,10 @@ def _sampler_kwargs(args: argparse.Namespace) -> dict:
         "cfg_scale": args.cfg_scale,
         "prism_eta": args.prism_eta,
         "prism_quality_threshold": args.prism_quality_threshold,
+        "backplay_budget": args.backplay_budget,
+        "backplay_threshold": args.backplay_threshold,
+        "backplay_stride": args.backplay_stride,
+        "backplay_block_buffer": args.backplay_block_buffer,
         "remdm_eta_rescale": args.remdm_eta_rescale,
         "remdm_eta_cap": args.remdm_eta_cap,
         "remdm_ton": args.remdm_ton,

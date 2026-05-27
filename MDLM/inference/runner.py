@@ -7,11 +7,13 @@ from pathlib import Path
 import torch
 
 from diffusion import sample_trim
+from diffusion.remdm import compute_initial_confidence
 from diffusion.sampler import MDLMSampler, MDLMSamplerConfig
 from diffusion.schedules import LinearAlphaScheduler
 
 from .arithmetic_metrics import ArithmeticMetrics
 from .arithmetic_display import write_arithmetic_steps_html
+from .remasking_metrics import compute_remasking_metrics
 from .sudoku_display import render_sudoku_grid, write_sudoku_steps_html
 from .sudoku_metrics import SudokuMetrics
 
@@ -24,6 +26,7 @@ def run_prompts(
     show_stats: bool = False,
     infill: bool = False,
     prism_head: torch.nn.Module | None = None,
+    backplay_head: torch.nn.Module | None = None,
     max_length: int = 20,
     task_name: str = "",
     solutions: list[str] | None = None,
@@ -32,7 +35,13 @@ def run_prompts(
 ) -> None:
     """Run MDLM sampling on prompts and print results."""
     scheduler = LinearAlphaScheduler()
-    sampler = MDLMSampler(model=model, tokenizer=tokenizer, scheduler=scheduler, prism_head=prism_head)
+    sampler = MDLMSampler(
+        model=model,
+        tokenizer=tokenizer,
+        scheduler=scheduler,
+        prism_head=prism_head,
+        backplay_head=backplay_head,
+    )
 
     config_params = {k: v for k, v in sampler_kwargs.items() if v is not None}
     config_params["return_dict"] = True
@@ -68,7 +77,7 @@ def run_prompts(
     for idx, prompt in enumerate(prompts, start=1):
         prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
         if infill:
-            output, full_answer, display_prompt_ids = _run_infill(
+            output, full_answer, display_prompt_ids, revisitable_region = _run_infill(
                 sampler=sampler,
                 tokenizer=tokenizer,
                 prompt=prompt,
@@ -90,6 +99,7 @@ def run_prompts(
                 show_steps=show_steps,
                 run_log_dir=run_log_dir,
                 metrics=sudoku_metrics,
+                revisitable_region=revisitable_region,
             )
             _handle_arithmetic_result(
                 idx=idx,
@@ -103,6 +113,7 @@ def run_prompts(
                 run_log_dir=run_log_dir,
                 metrics=arithmetic_metrics,
                 display_prompt_ids=display_prompt_ids,
+                revisitable_region=revisitable_region,
             )
         else:
             output = sampler.sample([prompt_ids], config=sample_config)
@@ -123,6 +134,7 @@ def run_prompts(
                 run_log_dir=run_log_dir,
                 metrics=arithmetic_metrics,
                 display_prompt_ids=display_prompt_ids,
+                revisitable_region=_generation_region(output, len(prompt_ids)),
             )
 
         if show_stats and output.histories is not None:
@@ -215,16 +227,36 @@ def _run_infill(
             display_prompt_ids = prompt_ids
             display_prefix = prompt
 
+    infill_kwargs = {"revisitable_region": [revisitable_region]}
+    if sample_config.remasking == "remdm_conf":
+        input_tensor = torch.tensor(
+            [masked_prompt_ids],
+            dtype=torch.long,
+            device=sampler.model.device,
+        )
+        attention_mask = torch.ones_like(input_tensor, dtype=torch.long)
+        revisitable_tensor = torch.tensor(
+            [revisitable_region],
+            dtype=torch.bool,
+            device=sampler.model.device,
+        )
+        infill_kwargs["initial_confidence"] = compute_initial_confidence(
+            model=sampler.model,
+            x_full=input_tensor,
+            attention_mask=attention_mask,
+            revisitable_region=revisitable_tensor,
+        )
+
     output = sampler.infill(
         [masked_prompt_ids],
         config=sample_config,
-        revisitable_region=[revisitable_region],
+        **infill_kwargs,
     )
     generated_ids = output.sequences[0].tolist()
     start, end = rhs_span
     answer_ids = _trim_at_eos(generated_ids[start:end], tokenizer)
     answer = tokenizer.decode(answer_ids, skip_special_tokens=True).replace(" ", "")
-    return output, display_prefix.replace(" ", "") + answer.strip(), display_prompt_ids
+    return output, display_prefix.replace(" ", "") + answer.strip(), display_prompt_ids, revisitable_region
 
 
 def _trim_at_eos(token_ids: list[int], tokenizer) -> list[int]:
@@ -247,6 +279,7 @@ def _handle_sudoku_result(
     show_steps: bool,
     run_log_dir: Path | None,
     metrics: SudokuMetrics,
+    revisitable_region: list[bool],
 ) -> None:
     if task_name != "sudoku" or len(full_answer) != 81:
         return
@@ -254,7 +287,14 @@ def _handle_sudoku_result(
     solution = solutions[idx - 1] if solutions and idx - 1 < len(solutions) else None
 
     if solution:
-        metrics.add(idx, prompt, solution, full_answer)
+        remasking_metrics = compute_remasking_metrics(
+            output=output,
+            target_ids=tokenizer.encode(solution, add_special_tokens=False),
+            editable_mask=revisitable_region,
+            sample_idx=0,
+            mask_token_id=tokenizer.mask_token_id,
+        )
+        metrics.add(idx, prompt, solution, full_answer, remasking_metrics=remasking_metrics)
         print("\n  Ground truth (bold=clue):")
         print(render_sudoku_grid(solution, clue_str=prompt))
 
@@ -284,6 +324,7 @@ def _handle_arithmetic_result(
     run_log_dir: Path | None,
     metrics: ArithmeticMetrics,
     display_prompt_ids: list[int],
+    revisitable_region: list[bool],
 ) -> None:
     if task_name != "arithmetic":
         return
@@ -291,11 +332,27 @@ def _handle_arithmetic_result(
     expected_str = solutions[idx - 1] if solutions and idx - 1 < len(solutions) else None
 
     if expected_str is not None:
+        target_ids = tokenizer.encode(expected_str, add_special_tokens=False)
+        injected_error_mask = _initial_visible_error_mask(
+            output=output,
+            target_ids=target_ids,
+            editable_mask=revisitable_region,
+            mask_token_id=tokenizer.mask_token_id,
+        )
+        remasking_metrics = compute_remasking_metrics(
+            output=output,
+            target_ids=target_ids,
+            editable_mask=revisitable_region,
+            injected_error_mask=injected_error_mask,
+            sample_idx=0,
+            mask_token_id=tokenizer.mask_token_id,
+        )
         metrics.add(
             idx=idx,
             prompt=prompt,
             expected=expected_str,
             output=full_answer,
+            remasking_metrics=remasking_metrics,
         )
 
     if show_steps and output.histories is not None and run_log_dir is not None:
@@ -359,3 +416,31 @@ def _print_step_stats(output, tokenizer, display_prompt_ids: list[int], idx: int
                 visual_seq.append(token_str)
 
         print(f"    Step {step_idx + 1:02d} | {' '.join(visual_seq)}")
+
+
+def _generation_region(output, prompt_len: int) -> list[bool]:
+    if output.histories is None:
+        return []
+    seq_len = output.histories[0].shape[1]
+    return [pos >= prompt_len for pos in range(seq_len)]
+
+
+def _initial_visible_error_mask(
+    output,
+    target_ids: list[int],
+    editable_mask: list[bool],
+    mask_token_id: int,
+) -> list[bool]:
+    if output.histories is None:
+        return []
+
+    initial = output.histories[0][0].tolist()
+    seq_len = len(initial)
+    mask: list[bool] = [False] * seq_len
+    for pos in range(min(seq_len, len(target_ids), len(editable_mask))):
+        if not editable_mask[pos]:
+            continue
+        token_id = initial[pos]
+        if token_id != mask_token_id and token_id != target_ids[pos]:
+            mask[pos] = True
+    return mask

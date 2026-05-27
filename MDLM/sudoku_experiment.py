@@ -28,6 +28,7 @@ from diffusion.sampler import MDLMSampler, MDLMSamplerConfig
 from diffusion.schedules import LinearAlphaScheduler
 from diffusion.remdm import compute_initial_confidence
 from MDLM.run_inference import load_model
+from MDLM.inference.remasking_metrics import RemaskingMetrics, compute_remasking_metrics
 
 
 R = "\033[0m"
@@ -57,6 +58,11 @@ def tokens_to_board(token_ids: list[int], tokenizer) -> np.ndarray:
     for token_id in token_ids[:81]:
         digits.append(token_id_to_digit(int(token_id), tokenizer))
     return np.asarray(digits, dtype=np.int64)
+
+
+def board_to_token_ids(board: np.ndarray, tokenizer) -> list[int]:
+    digit_ids = digit_token_ids(tokenizer)
+    return [digit_ids[int(digit)] for digit in board[:81]]
 
 
 def render_sudoku_grid(
@@ -321,6 +327,10 @@ def evaluate_batch(
         stochastic_transfer=args.stochastic_transfer,
         prism_eta=args.prism_eta,
         prism_quality_threshold=args.prism_quality_threshold,
+        backplay_budget=args.backplay_budget,
+        backplay_threshold=args.backplay_threshold,
+        backplay_stride=args.backplay_stride,
+        backplay_block_buffer=args.backplay_block_buffer,
         remdm_eta_rescale=args.remdm_eta_rescale,
         remdm_eta_cap=args.remdm_eta_cap,
         block_size=args.block_size,
@@ -426,6 +436,14 @@ def evaluate_batch(
             )
             exact_board_accuracy = float(np.array_equal(recovered, target))
             clue_cell_violation_count = int((recovered[clue_mask] != target[clue_mask]).sum())
+            remasking_metrics = compute_remasking_metrics(
+                output=output,
+                target_ids=board_to_token_ids(target, tokenizer),
+                editable_mask=(~clue_mask).tolist(),
+                injected_error_mask=error_mask.tolist(),
+                sample_idx=local_i,
+                mask_token_id=tokenizer.mask_token_id,
+            )
 
             rows.append(
                 {
@@ -443,6 +461,37 @@ def evaluate_batch(
                     "inserted_error_recovered_count": len(recovered_error_steps),
                     "inserted_error_recovery_step_sum": int(sum(recovered_error_steps)),
                     "mean_inserted_error_first_recovery_step": mean_inserted_error_first_recovery_step,
+                    "injected_error_remasked_count": remasking_metrics["injected_error_remasked_count"],
+                    "injected_error_remasked_pct": remasking_metrics["injected_error_remasked_pct"],
+                    "injected_error_first_remask_steps": " ".join(
+                        str(s) for s in remasking_metrics["injected_error_first_remask_steps"]
+                    ),
+                    "injected_error_first_remask_step_sum": remasking_metrics[
+                        "injected_error_first_remask_step_sum"
+                    ],
+                    "injected_error_avg_first_remask_step": remasking_metrics[
+                        "injected_error_avg_first_remask_step"
+                    ],
+                    "false_remasked_cell_count": remasking_metrics["false_remasked_cell_count"],
+                    "correct_cell_opportunity_count": remasking_metrics[
+                        "correct_cell_opportunity_count"
+                    ],
+                    "false_remasked_cell_pct": remasking_metrics["false_remasked_cell_pct"],
+                    "model_generated_error_count": remasking_metrics[
+                        "model_generated_error_count"
+                    ],
+                    "model_generated_error_remasked_count": remasking_metrics[
+                        "model_generated_error_remasked_count"
+                    ],
+                    "model_generated_error_remasked_pct": remasking_metrics[
+                        "model_generated_error_remasked_pct"
+                    ],
+                    "model_generated_error_first_remask_step_sum": remasking_metrics[
+                        "model_generated_error_first_remask_step_sum"
+                    ],
+                    "model_generated_error_avg_first_remask_step": remasking_metrics[
+                        "model_generated_error_avg_first_remask_step"
+                    ],
                     "exact_board_accuracy": exact_board_accuracy,
                     "clue_cell_violation_count": clue_cell_violation_count,
                 }
@@ -494,11 +543,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--remasking",
         default="random",
-        choices=["low_confidence", "random", "prism", "remdm_conf"],
+        choices=["low_confidence", "random", "prism", "backplay", "remdm_conf"],
     )
     parser.add_argument("--stochastic_transfer", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--prism_eta", type=float, default=0.2)
     parser.add_argument("--prism_quality_threshold", type=float, default=None)
+    parser.add_argument("--backplay_budget", type=int, default=2)
+    parser.add_argument("--backplay_threshold", type=float, default=0.75)
+    parser.add_argument("--backplay_stride", type=int, default=4)
+    parser.add_argument("--backplay_block_buffer", type=int, default=4)
     parser.add_argument("--remdm_eta_rescale", type=float, default=1.0,
                         help="ReMDM: rescale factor for σ_max (0=no remasking, 1=full).")
     parser.add_argument("--remdm_eta_cap", type=float, default=1.0,
@@ -531,9 +584,11 @@ def main() -> None:
     if args.visualize:
         print("[*] visualize   : True")
 
-    tokenizer, model, prism_head = load_model(args.checkpoint, device)
+    tokenizer, model, prism_head, backplay_head = load_model(args.checkpoint, device)
     if args.remasking == "prism" and prism_head is None:
         print("[!] remasking='prism' requested, but no PRISM head was found in the checkpoint.")
+    if args.remasking == "backplay" and backplay_head is None:
+        print("[!] remasking='backplay' requested, but no BackPlay head was found in the checkpoint.")
 
     scheduler = LinearAlphaScheduler()
     sampler = MDLMSampler(
@@ -541,6 +596,7 @@ def main() -> None:
         tokenizer=tokenizer,
         scheduler=scheduler,
         prism_head=prism_head,
+        backplay_head=backplay_head,
     )
 
     boards, clues, corrupted, error_masks = load_sudoku_arrays(
@@ -576,6 +632,27 @@ def main() -> None:
         if recovered_step_count > 0
         else float("nan")
     )
+    remasking_summary = RemaskingMetrics()
+    for row in rows:
+        remasking_summary.add(
+            {
+                "injected_error_count": row["inserted_error_count"],
+                "injected_error_remasked_count": row["injected_error_remasked_count"],
+                "injected_error_first_remask_step_sum": row[
+                    "injected_error_first_remask_step_sum"
+                ],
+                "false_remasked_cell_count": row["false_remasked_cell_count"],
+                "correct_cell_opportunity_count": row["correct_cell_opportunity_count"],
+                "model_generated_error_count": row["model_generated_error_count"],
+                "model_generated_error_remasked_count": row[
+                    "model_generated_error_remasked_count"
+                ],
+                "model_generated_error_first_remask_step_sum": row[
+                    "model_generated_error_first_remask_step_sum"
+                ],
+            }
+        )
+    remask_summary = remasking_summary.summary()
 
     print("\n=== Sudoku Recovery Results ===")
     print(f"error recovery accuracy : {mean_inserted_error_recovery_accuracy:.4f}")
@@ -583,6 +660,23 @@ def main() -> None:
         print("mean error recovery step : n/a")
     else:
         print(f"mean error recovery step : {mean_inserted_error_first_recovery_step:.2f}")
+    print(
+        "injected errors remasked        : "
+        f"{_fmt_pct(remask_summary['injected_error_remasked_pct'])} "
+        f"({remask_summary['injected_error_remasked_count']}/{remask_summary['injected_error_count']}), "
+        f"avg step {_fmt_num(remask_summary['injected_error_avg_first_remask_step'])}"
+    )
+    print(
+        "false remasking                 : "
+        f"{_fmt_pct(remask_summary['false_remasked_cell_pct'])} "
+        f"({remask_summary['false_remasked_cell_count']}/{remask_summary['correct_cell_opportunity_count']})"
+    )
+    print(
+        "model-generated errors remasked : "
+        f"{_fmt_pct(remask_summary['model_generated_error_remasked_pct'])} "
+        f"({remask_summary['model_generated_error_remasked_count']}/{remask_summary['model_generated_error_count']}), "
+        f"avg step {_fmt_num(remask_summary['model_generated_error_avg_first_remask_step'])}"
+    )
 
     print(f"non-clue cell accuracy           : {mean_non_clue_cell_accuracy:.4f}")
     print(f"exact board accuracy             : {mean_exact_board_accuracy:.4f}")
@@ -595,6 +689,14 @@ def main() -> None:
             writer.writeheader()
             writer.writerows(rows)
         print(f"\n[*] Wrote per-example metrics to {out_path}")
+
+
+def _fmt_pct(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.4f}%"
+
+
+def _fmt_num(value: float | int | None) -> str:
+    return "n/a" if value is None else f"{float(value):.2f}"
 
 
 if __name__ == "__main__":

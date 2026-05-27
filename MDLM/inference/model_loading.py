@@ -8,11 +8,12 @@ from transformers import PreTrainedTokenizerFast
 
 from backbones.llada.config import MDLMConfig
 from backbones.llada.model import MDLMModelLM
+from diffusion.backplay import BackPlayHead
 from diffusion.prism import PRISMHead
 
 
 def load_model(checkpoint: str, device: torch.device) -> tuple:
-    """Load tokenizer, backbone model, and optional PRISM head."""
+    """Load tokenizer, backbone model, and optional correction head."""
     checkpoint_path = Path(checkpoint)
     tokenizer = PreTrainedTokenizerFast.from_pretrained(checkpoint)
 
@@ -48,5 +49,25 @@ def load_model(checkpoint: str, device: torch.device) -> tuple:
         prism_head.to(device)
         prism_head.eval()
 
-    return tokenizer, model, prism_head
+    backplay_head = None
+    backplay_path = checkpoint_path / "backplay_head.pt"
+    if backplay_path.exists():
+        print(f"[*] Found BackPlay head at {backplay_path}")
+        backplay_config_path = checkpoint_path / "backplay_head_config.json"
+        if backplay_config_path.exists():
+            with open(backplay_config_path, "r", encoding="utf-8") as f:
+                backplay_config = json.load(f)
+        else:
+            backplay_config = {
+                "d_model": model.config.d_model,
+                "n_layers": 2,
+                "n_heads": 4,
+                "dropout": 0.0,
+                "hidden_state_index": -2,
+            }
+        backplay_head = BackPlayHead.from_config_dict(backplay_config)
+        backplay_head.load_state_dict(torch.load(backplay_path, map_location=device, weights_only=True))
+        backplay_head.to(device)
+        backplay_head.eval()
 
+    return tokenizer, model, prism_head, backplay_head
