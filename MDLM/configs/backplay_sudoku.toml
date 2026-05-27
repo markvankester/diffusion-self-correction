@@ -11,7 +11,7 @@ eval_fraction = 0.05
 
 # BackPlay adapter
 backplay_delta_t = 0.0625                         # Rollback step size (e.g. 0.0625 = 1/16, 0.03125 = 1/32)
-backplay_loss_scope = "non_mask"                  # Options: "non_mask", "artifact", "all"
+backplay_loss_scope = "artifact"                  # Options: "non_mask", "artifact", "all"
 
 # Optimization
 batch_size = 256
