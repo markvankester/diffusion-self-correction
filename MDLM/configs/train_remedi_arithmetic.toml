@@ -38,4 +38,4 @@ save_steps = 50000
 
 # Reporting
 run_name = "remedi-arithmetic"
-report_to = "none"                           # Disable wandb by default for testing/stability.
+report_to = "wandb"
