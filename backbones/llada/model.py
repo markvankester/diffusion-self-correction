@@ -30,6 +30,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import einsum
 from transformers import PreTrainedModel
+from transformers.utils import ModelOutput
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from transformers.models.auto import AutoModel
 from transformers.cache_utils import Cache
@@ -72,6 +73,9 @@ __all__ = [
     "MDLMPreTrainedModel",
     "MDLMModel",
     "MDLMModelLM",
+    "RemeDiUPMOutput",
+    "RemeDiUPMModel",
+    "RemeDiUPMModelLM",
 ]
 
 
@@ -1602,3 +1606,268 @@ class LLaDAModelLM(LLaDAPreTrainedModel):
 MDLMPreTrainedModel = LLaDAPreTrainedModel
 MDLMModel = LLaDAModel
 MDLMModelLM = LLaDAModelLM
+
+
+from dataclasses import dataclass
+
+@dataclass
+class RemeDiUPMOutput(ModelOutput):
+    logits: torch.FloatTensor = None
+    attn_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None
+    hidden_states: Optional[Tuple[torch.Tensor]] = None
+    confidences: Optional[torch.FloatTensor] = None
+
+
+class RemeDiUPMModel(LLaDAModel):
+    def __init__(self, config: ModelConfig, init_params: bool = True):
+        super().__init__(config, init_params=False)  # call parent init, don't init weights yet
+        
+        # Determine UPM positions dynamically based on n_layers
+        if self.config.n_layers >= 32:
+            self.upm_positions = [0, 10, 20, 30]
+        else:
+            step = max(1, self.config.n_layers // 4)
+            self.upm_positions = [i * step for i in range(4)]
+            self.upm_positions = sorted(list(set(p for p in self.upm_positions if p < self.config.n_layers)))
+
+        self.blocks_upm = nn.ModuleList([
+            LLaDABlock.build(i + len(self.transformer.blocks), config, self._LLaDAModel__cache)
+            for i in range(len(self.upm_positions))
+        ])
+        self.backprop_linears = nn.ModuleList([
+            nn.Linear(self.config.d_model, self.config.d_model, bias=self.config.include_bias, device=config.init_device)
+            for _ in self.upm_positions
+        ])
+        self.backprop_norms = nn.ModuleList([
+            LayerNorm.build(config)
+            for _ in self.upm_positions
+        ])
+        self.ln_f_upm = LayerNorm.build(config)
+        self.linear_confidence = nn.Linear(self.config.d_model, 1, bias=self.config.include_bias, device=config.init_device)
+
+        if init_params and self.config.init_device != "meta":
+            self.reset_parameters()
+            
+    def reset_parameters(self):
+        super().reset_parameters()
+        self.ln_f_upm.reset_parameters()
+        nn.init.trunc_normal_(self.linear_confidence.weight, std=0.02)
+        if self.linear_confidence.bias is not None:
+            nn.init.zeros_(self.linear_confidence.bias)
+        for block in self.blocks_upm:
+            block.reset_parameters()
+        for i_linear in self.backprop_linears:
+            i_linear.weight.data.zero_()
+            if i_linear.bias is not None:
+                i_linear.bias.data.zero_()
+        for i_norm in self.backprop_norms:
+            i_norm.reset_parameters()
+
+    def forward(
+        self,
+        input_ids: torch.LongTensor,
+        input_embeddings: Optional[torch.FloatTensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        attention_bias: Optional[torch.Tensor] = None,
+        past_key_values: Optional[Sequence[Tuple[torch.Tensor, torch.Tensor]]] = None,
+        use_cache: bool = False,
+        last_logits_only: bool = False,
+        output_hidden_states: Optional[bool] = None,
+    ) -> RemeDiUPMOutput:
+        output_hidden_states = output_hidden_states if output_hidden_states is not None else False
+
+        if past_key_values:
+            assert len(past_key_values) == self.config.n_layers
+
+        batch_size, seq_len = input_ids.size() if input_embeddings is None else input_embeddings.size()[:2]
+        if past_key_values is None:
+            past_length = 0
+        else:
+            past_length = past_key_values[0][0].size(-2)
+
+        x = self.transformer.wte(input_ids) if input_embeddings is None else input_embeddings
+
+        if self.config.input_emb_norm:
+            x = x * (self.config.d_model**0.5)
+
+        if not (self.config.alibi or self.config.rope):
+            pos = torch.arange(past_length, past_length + seq_len, dtype=torch.long, device=x.device).unsqueeze(0)
+            pos_emb = self.transformer.wpe(pos)
+            x = pos_emb + x
+
+        x = self.transformer.emb_drop(x)
+
+        if attention_mask is not None and 0.0 in attention_mask:
+            attention_mask = attention_mask.to(dtype=torch.float).view(batch_size, -1)[:, None, None, :]
+            attention_mask = (1.0 - attention_mask) * torch.finfo(attention_mask.dtype).min
+        else:
+            attention_mask = None
+
+        if (
+            attention_bias is not None
+            or attention_mask is not None
+            or self.config.alibi
+            or past_key_values is not None
+        ):
+            if attention_bias is None and self.config.alibi:
+                attention_bias = get_causal_attention_bias(
+                    self._LLaDAModel__cache, past_length + seq_len, x.device
+                ) + self.get_alibi_attention_bias(past_length + seq_len, x.device)
+            elif attention_bias is None:
+                attention_bias = self.get_bidirectional_attention_bias(past_length + seq_len, x.device)
+            elif attention_bias.dtype in (torch.int8, torch.bool):
+                attention_bias = attention_bias.to(dtype=torch.float)
+                attention_bias.masked_fill_(attention_bias == 0.0, torch.finfo(attention_bias.dtype).min)
+
+            mask_len = seq_len
+            if attention_mask is not None:
+                mask_len = attention_mask.shape[-1]
+            elif past_key_values is not None:
+                mask_len = past_key_values[0][0].shape[-2] + seq_len
+            attention_bias = attention_bias[:, :, :mask_len, :mask_len].to(dtype=torch.float)
+
+            if attention_mask is not None:
+                attention_bias = attention_bias + attention_mask
+                ensure_finite_(attention_bias, check_neg_inf=True, check_pos_inf=False)
+
+        attn_key_values = [] if use_cache else None
+        upm_feat = None
+        all_hidden_states = []
+
+        for block_idx, block in enumerate(self.transformer.blocks):
+            if output_hidden_states:
+                all_hidden_states.append(x)
+
+            layer_past = None if past_key_values is None else past_key_values[block_idx]
+            
+            if (
+                (self.activation_checkpointing_strategy == ActivationCheckpointingStrategy.whole_layer)
+                or (
+                    self.activation_checkpointing_strategy == ActivationCheckpointingStrategy.one_in_two
+                    and block_idx % 2 == 0
+                )
+                or (
+                    self.activation_checkpointing_strategy == ActivationCheckpointingStrategy.one_in_three
+                    and block_idx % 3 == 0
+                )
+                or (
+                    self.activation_checkpointing_strategy == ActivationCheckpointingStrategy.one_in_four
+                    and block_idx % 4 == 0
+                )
+            ):
+                x, cache = self._activation_checkpoint_fn(
+                    block, x, attention_bias=attention_bias, layer_past=layer_past, use_cache=use_cache
+                )
+            else:
+                x, cache = block(x, attention_bias=attention_bias, layer_past=layer_past, use_cache=use_cache)
+                
+            if attn_key_values is not None:
+                assert cache is not None
+                attn_key_values.append(cache)
+
+            if block_idx in self.upm_positions:
+                upm_index = self.upm_positions.index(block_idx)
+                upm_block = self.blocks_upm[upm_index]
+                upm_feat = x if upm_feat is None else x + upm_feat
+                
+                if (
+                    (self.activation_checkpointing_strategy == ActivationCheckpointingStrategy.whole_layer)
+                    or (
+                        self.activation_checkpointing_strategy == ActivationCheckpointingStrategy.one_in_two
+                        and block_idx % 2 == 0
+                    )
+                    or (
+                        self.activation_checkpointing_strategy == ActivationCheckpointingStrategy.one_in_three
+                        and block_idx % 3 == 0
+                    )
+                    or (
+                        self.activation_checkpointing_strategy == ActivationCheckpointingStrategy.one_in_four
+                        and block_idx % 4 == 0
+                    )
+                ):
+                    upm_feat, upm_cache = self._activation_checkpoint_fn(
+                        upm_block, upm_feat, attention_bias=attention_bias, layer_past=layer_past, use_cache=use_cache
+                    )
+                else:
+                    upm_feat, upm_cache = upm_block(
+                        upm_feat, attention_bias=attention_bias, layer_past=layer_past, use_cache=use_cache
+                    )
+                    
+                x = self.backprop_linears[upm_index](self.backprop_norms[upm_index](upm_feat)) + x
+                if attn_key_values is not None:
+                    assert upm_cache is not None
+                    attn_key_values.append(upm_cache)
+
+        if last_logits_only:
+            x = x[:, -1, :].unsqueeze(1)
+
+        x = self.transformer.ln_f(x)
+        if output_hidden_states:
+            all_hidden_states.append(x)
+
+        if self.config.weight_tying:
+            logits = F.linear(x, self.transformer.wte.weight, None)
+        else:
+            logits = self.transformer.ff_out(x)
+        if self.config.scale_logits:
+            logits.mul_(1 / math.sqrt(self.config.d_model))
+
+        if upm_feat is not None:
+            upm_feat = self.ln_f_upm(upm_feat)
+            confidences = self.linear_confidence(upm_feat).squeeze(-1)
+        else:
+            confidences = torch.zeros(logits.shape[:-1], device=logits.device, dtype=logits.dtype)
+
+        return RemeDiUPMOutput(
+            logits=logits,
+            confidences=confidences,
+            attn_key_values=attn_key_values,
+            hidden_states=tuple(all_hidden_states) if output_hidden_states else None
+        )
+
+
+class RemeDiUPMModelLM(LLaDAModelLM):
+    def __init__(self, config: LLaDAConfig, model: Optional[RemeDiUPMModel] = None, init_params: bool = False):
+        super(LLaDAModelLM, self).__init__(config)
+        
+        if not model:
+            model_config = create_model_config_from_pretrained_config(config)
+            model_config.init_device = config.init_device or "cpu"
+            self.model = RemeDiUPMModel(model_config, init_params=init_params)
+        else:
+            self.model = model
+
+    def forward(
+        self,
+        input_ids: torch.LongTensor = None,
+        inputs_embeds: Optional[torch.FloatTensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        attention_bias: Optional[torch.Tensor] = None,
+        past_key_values: Optional[List[torch.FloatTensor]] = None,
+        labels: Optional[torch.LongTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        cache_position: Optional[Cache] = None,
+    ) -> Union[Tuple, RemeDiUPMOutput]:
+        if use_cache is None:
+            use_cache = self.config.use_cache
+
+        if output_attentions:
+            raise ValueError("output_attentions is not yet supported in RemeDi")
+
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        outputs = self.model.forward(
+            input_ids=input_ids,
+            input_embeddings=inputs_embeds,
+            attention_mask=attention_mask,
+            attention_bias=attention_bias,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+            output_hidden_states=output_hidden_states,
+        )
+
+        return outputs
+

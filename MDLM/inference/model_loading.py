@@ -25,7 +25,12 @@ def load_model(checkpoint: str, device: torch.device) -> tuple:
         )
 
     config = MDLMConfig.from_pretrained(checkpoint)
-    model = MDLMModelLM.from_pretrained(checkpoint, config=config)
+    architectures = getattr(config, "architectures", [])
+    if "RemeDiUPMModelLM" in architectures:
+        from backbones.llada.model import RemeDiUPMModelLM
+        model = RemeDiUPMModelLM.from_pretrained(checkpoint, config=config)
+    else:
+        model = MDLMModelLM.from_pretrained(checkpoint, config=config)
     model.eval()
     model.to(device)
 

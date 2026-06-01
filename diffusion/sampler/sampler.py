@@ -42,6 +42,9 @@ class _StepContext:
     blocked_remask_indices: list[list[int]] | None = None
     t_tensor: torch.Tensor | None = None
     delta_t: float | None = None
+    prompt_lens: list[int] | None = None
+    block_idx: int | None = None
+    block_size: int | None = None
 
 
 @dataclass
@@ -366,6 +369,58 @@ class MDLMSampler:
 
         return transfer_index, remask_index, quality_scores
 
+    def _step_remedi(
+        self,
+        ctx: _StepContext,
+        x0: torch.Tensor,
+        x0_p: torch.Tensor,
+        prompt_lens: list[int] | None,
+        block_idx: int | None,
+        block_size: int | None,
+        model_confidences: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+        x = ctx.x
+        mask_id = ctx.mask_id
+        B = ctx.B
+        quality_scores = None
+
+        assert ctx.num_transfer_tokens is not None
+        if block_idx is None or block_size is None:
+            raise ValueError("block_idx and block_size must be specified in _StepContext for RemeDi remasking")
+        if prompt_lens is None:
+            prompt_lens = [0] * B
+
+        transfer_index = torch.zeros_like(x, dtype=torch.bool)
+        remask_index = torch.zeros_like(x, dtype=torch.bool)
+
+        scores_source = model_confidences if model_confidences is not None else x0_p
+
+        for j in range(B):
+            active_mask = torch.zeros_like(x[j], dtype=torch.bool)
+            start = prompt_lens[j] + block_idx * block_size
+            end = min(start + block_size, x.size(1))
+            if start < end:
+                active_mask[start:end] = ctx.revisitable_region[j, start:end]
+
+            remask_index[j, active_mask] = True
+
+            k = int(ctx.num_transfer_tokens[j, : ctx.step_idx + 1].sum().item())
+            n_active = int(active_mask.sum().item())
+            k = min(k, n_active)
+
+            if k > 0:
+                scores = scores_source[j].clone()
+                scores[~active_mask] = -torch.inf
+                _, select_idx = torch.topk(scores, k=k)
+                
+                transfer_index[j, select_idx] = True
+                remask_index[j, select_idx] = False
+
+        x[transfer_index] = x0[transfer_index]
+        x[remask_index] = mask_id
+
+        return transfer_index, remask_index, quality_scores
+
     # ------------------------------------------------------------------
     # Shared inner loop
     # ------------------------------------------------------------------
@@ -401,15 +456,22 @@ class MDLMSampler:
             raise RuntimeError("BackPlay remasking requires a backplay_head")
 
         # ---- 1. Forward pass ------------------------------------------------
+        model_conf = None
         if cfg_scale > 0.0:
             un_x = x.clone()
             un_x[ctx.unmasked_index] = mask_id
             x_ = torch.cat([x, un_x], dim=0)
-            logits = self.model(
+            outputs = self.model(
                 x_, attention_mask=attention_mask.repeat(2, 1)
-            ).logits
+            )
+            logits = outputs.logits
             logits, un_logits = torch.chunk(logits, 2, dim=0)
             logits = un_logits + (cfg_scale + 1) * (logits - un_logits)
+            
+            model_conf_all = getattr(outputs, "confidences", None)
+            if model_conf_all is not None:
+                model_conf, _ = torch.chunk(model_conf_all, 2, dim=0)
+
             needs_hidden_states = (
                 (remasking == "prism" and self.prism_head is not None and prism_eta > 0.0)
                 or (remasking == "backplay" and self.backplay_head is not None)
@@ -435,6 +497,7 @@ class MDLMSampler:
                 output_hidden_states=output_hidden_states,
             )
             logits = outputs.logits
+            model_conf = getattr(outputs, "confidences", None)
             if output_hidden_states and remasking == "backplay":
                 hidden_index = getattr(self.backplay_head.config, "hidden_state_index", -2)
                 hidden_states = outputs.hidden_states[hidden_index]
@@ -460,7 +523,7 @@ class MDLMSampler:
         x0 = torch.argmax(logits_with_noise, dim=-1)
 
         # ---- 4. Per-position confidence ------------------------------------
-        if remasking in ("low_confidence", "prism", "backplay", "remdm_conf"):
+        if remasking in ("low_confidence", "prism", "backplay", "remdm_conf", "remedi"):
             p = F.softmax(logits, dim=-1)
             x0_p = torch.gather(p, dim=-1, index=x0.unsqueeze(-1)).squeeze(-1)
         elif remasking == "random":
@@ -472,7 +535,10 @@ class MDLMSampler:
             ctx.block_clamp_fn(x0_p, j)
 
         x0 = torch.where(mask_index, x0, x)
-        confidence = torch.where(mask_index, x0_p, torch.tensor(-np.inf, device=x.device))
+        if remasking == "remedi":
+            confidence = model_conf if model_conf is not None else x0_p
+        else:
+            confidence = torch.where(mask_index, x0_p, torch.tensor(-np.inf, device=x.device))
 
         # ---- 5. Select commit and remask -----------------------------------
         if remasking == "prism":
@@ -511,6 +577,16 @@ class MDLMSampler:
                 remdm_eta_cap=remdm_eta_cap,
                 remdm_ton=remdm_ton,
                 remdm_toff=remdm_toff,
+            )
+        elif remasking == "remedi":
+            transfer_index, remask_index, quality_scores = self._step_remedi(
+                ctx=ctx,
+                x0=x0,
+                x0_p=x0_p,
+                prompt_lens=ctx.prompt_lens,
+                block_idx=ctx.block_idx,
+                block_size=ctx.block_size,
+                model_confidences=model_conf,
             )
         else:
             transfer_index, remask_index, quality_scores = self._step_standard(
@@ -646,6 +722,9 @@ class MDLMSampler:
                         mask_id=mask_id,
                         confidence_scores=confidence_scores,
                         blocked_remask_indices=blocked_remask_indices,
+                        prompt_lens=params.get("prompt_lens"),
+                        block_idx=b,
+                        block_size=block_size,
                     )
 
                     confidence, transfer_index, remask_index, x0, quality_scores = (
@@ -673,7 +752,10 @@ class MDLMSampler:
 
                     if histories is not None:
                         histories.append(x.clone())
-                        confidences_history.append(confidence.clone())
+                        if remasking == "remdm_conf" and confidence_scores is not None:
+                            confidences_history.append(confidence_scores.clone())
+                        else:
+                            confidences_history.append(confidence.clone())
                         quality_history.append(None if quality_scores is None else quality_scores.clone())
                         transfer_history.append(transfer_index.clone())
                         remask_history.append(remask_index.clone())
@@ -737,6 +819,7 @@ class MDLMSampler:
                 for p in inputs
             ]
         prompt_lens = [p.shape[0] for p in inputs]
+        params["prompt_lens"] = prompt_lens
 
         if max_new_tokens:
             max_length = max_new_tokens + max(prompt_lens)
@@ -882,6 +965,7 @@ class MDLMSampler:
             ]
 
         B = len(inputs)
+        params["prompt_lens"] = [0] * B
         seq_lens = [t.shape[0] for t in inputs]
         T = max(seq_lens)
 

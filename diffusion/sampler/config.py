@@ -35,6 +35,7 @@ class MDLMSamplerConfig(BaseSamplerConfig):
             'random' = random selection order.
             'prism' = PRISM self-correction remasking.
             'backplay' = BackPlay error-head self-correction remasking.
+            'remedi' = RemeDi unmasking policy stream remasking.
     """
     max_new_tokens: int | None = None
     max_length: int | None = None

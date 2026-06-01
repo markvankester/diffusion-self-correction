@@ -1,0 +1,41 @@
+# Config for training RemeDi starting from a pretrained checkpoint.
+
+task = "arithmetic"                                         # arithmetic or sudoku
+
+# Data and paths
+checkpoint = "./checkpoints/arithmetic/final2/checkpoint-250000"
+data_path = "data/arithmetic_train.jsonl"                   # Training dataset path.
+eval_data_path = "data/arithmetic_eval.jsonl"               # Evaluation dataset path.
+output_dir = "./checkpoints/arithmetic/remedi"              # Directory for checkpoints and trainer outputs.
+limit_data = 0                                              # Number of rows to load; use 0 for the full dataset.
+mask_until_token = "="                                      # Optional: set labels to -100 for all tokens up to and including this token.
+
+# RemeDi specific arguments
+lambda_ups = 1.0                            # BCE loss weight for the unmasking policy stream.
+r_incorrect = 0.1                           # Ratio of corrupted tokens during SFT.
+
+# Optimization
+batch_size = 256
+grad_accum = 1
+lr = 3e-4
+lr_scheduler_type = "constant_with_warmup"      # Options: "linear", "cosine", "constant", "constant_with_warmup", "cosine_with_restarts", "polynomial", "inverse_sqrt".
+weight_decay = 0.05
+max_steps = 200000
+warmup_steps = 2000
+
+# Diffusion loss
+loss_weight_type = "scheduler"               # Options: "uniform", "scheduler".
+loss_norm_type = "token"                     # Options: "token", "sequence", "batch".
+time_epsilon = 1e-3                          # Lower bound for sampled diffusion timesteps.
+
+# Evaluation
+eval_strategy = "steps"                      # Evaluation strategy: "no", "steps", "epoch".
+eval_steps = 1000
+
+# Logging and Checkpointing
+logging_steps = 10
+save_steps = 50000
+
+# Reporting
+run_name = "remedi-arithmetic"
+report_to = "none"                           # Disable wandb by default for testing/stability.

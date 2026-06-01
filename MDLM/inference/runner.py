@@ -310,6 +310,16 @@ def _handle_sudoku_result(
             puzzle_idx=idx,
             html_path=run_log_dir / f"puzzle_{idx:03d}.html",
         )
+        _save_trajectory_jsonl(
+            run_log_dir=run_log_dir,
+            idx=idx,
+            prompt=prompt,
+            expected_str=solution,
+            full_answer=full_answer,
+            output=output,
+            tokenizer=tokenizer,
+            display_prompt_ids=None,
+        )
 
 
 def _handle_arithmetic_result(
@@ -365,6 +375,79 @@ def _handle_arithmetic_result(
             html_path=run_log_dir / f"task_{idx:03d}.html",
             display_prompt_ids=display_prompt_ids,
         )
+        _save_trajectory_jsonl(
+            run_log_dir=run_log_dir,
+            idx=idx,
+            prompt=prompt,
+            expected_str=expected_str,
+            full_answer=full_answer,
+            output=output,
+            tokenizer=tokenizer,
+            display_prompt_ids=display_prompt_ids,
+        )
+
+
+def _save_trajectory_jsonl(
+    run_log_dir: Path,
+    idx: int,
+    prompt: str,
+    expected_str: str | None,
+    full_answer: str,
+    output,
+    tokenizer,
+    display_prompt_ids: list[int] | None = None,
+) -> None:
+    import json
+    histories = output.histories
+    if histories is None:
+        return
+
+    prompt_len = len(display_prompt_ids) if display_prompt_ids is not None else 0
+    steps_data = []
+    for step_idx in range(len(histories) - 1):
+        prev_seq = histories[step_idx][0].tolist()
+        curr_seq = histories[step_idx + 1][0].tolist()
+
+        conf = None
+        if output.confidences is not None and step_idx < len(output.confidences):
+            conf = output.confidences[step_idx][0].tolist()
+
+        qual = None
+        if output.quality_scores is not None and step_idx < len(output.quality_scores):
+            q_tensor = output.quality_scores[step_idx]
+            if q_tensor is not None:
+                qual = q_tensor[0].tolist()
+
+        unmasked = []
+        remasked = []
+        if output.transfer_indices is not None and step_idx < len(output.transfer_indices):
+            unmasked = output.transfer_indices[step_idx][0].nonzero(as_tuple=True)[0].tolist()
+        if output.remask_indices is not None and step_idx < len(output.remask_indices):
+            remasked = output.remask_indices[step_idx][0].nonzero(as_tuple=True)[0].tolist()
+
+        steps_data.append({
+            "step_idx": step_idx + 1,
+            "tokens": [tokenizer.convert_ids_to_tokens(tid) for tid in curr_seq],
+            "token_ids": curr_seq,
+            "confidences": conf,
+            "quality_scores": qual,
+            "unmasked_indices": unmasked,
+            "remasked_indices": remasked,
+        })
+
+    trace_data = {
+        "example_idx": idx,
+        "prompt": prompt,
+        "expected": expected_str,
+        "output": full_answer,
+        "prompt_len": prompt_len,
+        "steps": steps_data,
+    }
+
+    jsonl_path = run_log_dir / "trajectories.jsonl"
+    with open(jsonl_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(trace_data) + "\n")
+
 
 
 def _print_step_stats(output, tokenizer, display_prompt_ids: list[int], idx: int) -> None:
