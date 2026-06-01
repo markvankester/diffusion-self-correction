@@ -1,5 +1,0 @@
-task,method,checkpoint,steps,remdm_eta_rescale,remdm_ton,remdm_toff,remdm_eta_cap,prism_eta,prism_quality_threshold,accuracy,cell_accuracy,injected_error_count,injected_error_remasked_count,injected_error_remasked_pct,injected_error_avg_first_remask_step,false_remasked_cell_count,correct_cell_opportunity_count,false_remasked_cell_pct,model_generated_error_count,model_generated_error_remasked_count,model_generated_error_remasked_pct,model_generated_error_avg_first_remask_step
-arithmetic,low_confidence,checkpoint-250000,8,,,,,,,100.0,,0,0,,,0,20,0.0,0,0,,
-arithmetic,low_confidence,checkpoint-250000,16,,,,,,,100.0,,0,0,,,0,20,0.0,0,0,,
-arithmetic,remdm_conf,checkpoint-250000,16,0.25,0.5,0.0,1.0,,,100.0,,0,0,,,0,20,0.0,0,0,,
-arithmetic,remdm_conf,checkpoint-250000,16,0.25,0.8,0.0,1.0,,,100.0,,0,0,,,1,20,5.0,0,0,,

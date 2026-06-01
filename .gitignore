@@ -18,6 +18,7 @@ sudoku_step_logs/
 inference_logs/
 scripts/
 docs/
+sweep_results/
 
 # Large/generated datasets, while keeping data/ source code tracked
 data/*.jsonl
