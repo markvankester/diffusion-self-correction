@@ -32,7 +32,8 @@ def run_prompts(
     solutions: list[str] | None = None,
     show_steps: bool = False,
     steps_log_dir: str | os.PathLike | None = None,
-) -> None:
+    quiet: bool = False,
+) -> ArithmeticMetrics | SudokuMetrics | None:
     """Run MDLM sampling on prompts and print results."""
     scheduler = LinearAlphaScheduler()
     sampler = MDLMSampler(
@@ -47,32 +48,36 @@ def run_prompts(
     config_params["return_dict"] = True
     sample_config = MDLMSamplerConfig(**config_params)
 
-    print(f"\n{'=' * 60}")
-    print("  RUNNING INFERENCE")
-    for key, value in config_params.items():
-        if key == "return_dict":
-            continue
-        print(f"  [*] {key:15}: {value}")
-    if show_stats:
-        print("  [*] show_stats     : True")
-    if infill:
-        print("  [*] infill         : True")
+    if not quiet:
+        print(f"\n{'=' * 60}")
+        print("  RUNNING INFERENCE")
+        for key, value in config_params.items():
+            if key == "return_dict":
+                continue
+            print(f"  [*] {key:15}: {value}")
+        if show_stats:
+            print("  [*] show_stats     : True")
+        if infill:
+            print("  [*] infill         : True")
 
-    run_log_dir = _make_run_log_dir(
-        task_name=task_name,
-        show_steps=show_steps,
-        solutions=solutions,
-        steps_log_dir=steps_log_dir,
-        config_params=config_params,
-    )
-    if show_steps and run_log_dir is not None:
-        print(f"  [*] step_logs_dir  : {run_log_dir}")
-    if solutions and run_log_dir is not None:
-        print(f"  [*] metrics_dir    : {run_log_dir}")
+    run_log_dir = None
+    if not quiet:
+        run_log_dir = _make_run_log_dir(
+            task_name=task_name,
+            show_steps=show_steps,
+            solutions=solutions,
+            steps_log_dir=steps_log_dir,
+            config_params=config_params,
+        )
+        if show_steps and run_log_dir is not None:
+            print(f"  [*] step_logs_dir  : {run_log_dir}")
+        if solutions and run_log_dir is not None:
+            print(f"  [*] metrics_dir    : {run_log_dir}")
 
     sudoku_metrics = SudokuMetrics()
     arithmetic_metrics = ArithmeticMetrics()
-    print(f"{'=' * 60}")
+    if not quiet:
+        print(f"{'=' * 60}")
 
     for idx, prompt in enumerate(prompts, start=1):
         prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
@@ -86,8 +91,9 @@ def run_prompts(
                 task_name=task_name,
                 sample_config=sample_config,
             )
-            print(f"\n  [{idx}] [Original] : {prompt}")
-            print(f"      [Infilled] : {full_answer}")
+            if not quiet:
+                print(f"\n  [{idx}] [Original] : {prompt}")
+                print(f"      [Infilled] : {full_answer}")
             _handle_sudoku_result(
                 idx=idx,
                 prompt=prompt,
@@ -100,6 +106,7 @@ def run_prompts(
                 run_log_dir=run_log_dir,
                 metrics=sudoku_metrics,
                 revisitable_region=revisitable_region,
+                quiet=quiet,
             )
             _handle_arithmetic_result(
                 idx=idx,
@@ -114,6 +121,7 @@ def run_prompts(
                 metrics=arithmetic_metrics,
                 display_prompt_ids=display_prompt_ids,
                 revisitable_region=revisitable_region,
+                quiet=quiet,
             )
         else:
             output = sampler.sample([prompt_ids], config=sample_config)
@@ -121,7 +129,8 @@ def run_prompts(
             answer = sample_trim(tokenizer, [generated_ids], [prompt_ids])[0]
             display_prompt_ids = prompt_ids
             full_answer = f"{prompt}{answer.strip()}"
-            print(f"\n  [{idx}] {full_answer}")
+            if not quiet:
+                print(f"\n  [{idx}] {full_answer}")
             _handle_arithmetic_result(
                 idx=idx,
                 prompt=prompt,
@@ -135,19 +144,28 @@ def run_prompts(
                 metrics=arithmetic_metrics,
                 display_prompt_ids=display_prompt_ids,
                 revisitable_region=_generation_region(output, len(prompt_ids)),
+                quiet=quiet,
             )
 
-        if show_stats and output.histories is not None:
+        if show_stats and output.histories is not None and not quiet:
             _print_step_stats(output, tokenizer, display_prompt_ids, idx)
 
     if task_name == "sudoku" and sudoku_metrics.puzzles and run_log_dir is not None:
         metrics_path = run_log_dir / "metrics.json"
         sudoku_metrics.write(metrics_path)
-        sudoku_metrics.print_summary(metrics_path)
+        if not quiet:
+            sudoku_metrics.print_summary(metrics_path)
     if task_name == "arithmetic" and arithmetic_metrics.examples and run_log_dir is not None:
         metrics_path = run_log_dir / "metrics.json"
         arithmetic_metrics.write(metrics_path)
-        arithmetic_metrics.print_summary(metrics_path)
+        if not quiet:
+            arithmetic_metrics.print_summary(metrics_path)
+
+    if task_name == "sudoku":
+        return sudoku_metrics
+    elif task_name == "arithmetic":
+        return arithmetic_metrics
+    return None
 
 
 def _make_run_log_dir(
@@ -280,6 +298,7 @@ def _handle_sudoku_result(
     run_log_dir: Path | None,
     metrics: SudokuMetrics,
     revisitable_region: list[bool],
+    quiet: bool = False,
 ) -> None:
     if task_name != "sudoku" or len(full_answer) != 81:
         return
@@ -295,11 +314,13 @@ def _handle_sudoku_result(
             mask_token_id=tokenizer.mask_token_id,
         )
         metrics.add(idx, prompt, solution, full_answer, remasking_metrics=remasking_metrics)
-        print("\n  Ground truth (bold=clue):")
-        print(render_sudoku_grid(solution, clue_str=prompt))
+        if not quiet:
+            print("\n  Ground truth (bold=clue):")
+            print(render_sudoku_grid(solution, clue_str=prompt))
 
-    print("\n  Model output (bold=clue, green=correct, red=wrong):")
-    print(render_sudoku_grid(full_answer, clue_str=prompt, solution_str=solution))
+    if not quiet:
+        print("\n  Model output (bold=clue, green=correct, red=wrong):")
+        print(render_sudoku_grid(full_answer, clue_str=prompt, solution_str=solution))
 
     if show_steps and output.histories is not None and run_log_dir is not None:
         write_sudoku_steps_html(
@@ -335,6 +356,7 @@ def _handle_arithmetic_result(
     metrics: ArithmeticMetrics,
     display_prompt_ids: list[int],
     revisitable_region: list[bool],
+    quiet: bool = False,
 ) -> None:
     if task_name != "arithmetic":
         return
