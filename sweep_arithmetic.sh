@@ -13,7 +13,7 @@ export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
 CHECKPOINTS=("checkpoints/arithmetic/final2/checkpoint-250000" 
              "checkpoints/arithmetic/prism/checkpoint-100000")
-METHODS=("low_confidence,remdm_conf" "prism")
+METHODS=("remdm_conf" "prism")
 
 uv run python scripts/run_hyperparam_sweep.py \
     --task arithmetic \
