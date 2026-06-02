@@ -378,6 +378,7 @@ class MDLMSampler:
         block_idx: int | None,
         block_size: int | None,
         model_confidences: torch.Tensor | None = None,
+        remedi_threshold: float = float("inf"),
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         x = ctx.x
         mask_id = ctx.mask_id
@@ -402,7 +403,10 @@ class MDLMSampler:
             if start < end:
                 active_mask[start:end] = ctx.revisitable_region[j, start:end]
 
-            remask_index[j, active_mask] = True
+            if remedi_threshold < float("inf"):
+                remask_index[j, active_mask] = (scores_source[j, active_mask] < remedi_threshold)
+            else:
+                remask_index[j, active_mask] = True
 
             k = int(ctx.num_transfer_tokens[j, : ctx.step_idx + 1].sum().item())
             n_active = int(active_mask.sum().item())
@@ -445,6 +449,7 @@ class MDLMSampler:
         remdm_eta_cap: float = 1.0,
         remdm_ton: float = 1.0,
         remdm_toff: float = 0.0,
+        remedi_threshold: float = float("inf"),
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]:
         x = ctx.x
         attention_mask = ctx.attention_mask
@@ -587,6 +592,7 @@ class MDLMSampler:
                 block_idx=ctx.block_idx,
                 block_size=ctx.block_size,
                 model_confidences=model_conf,
+                remedi_threshold=remedi_threshold,
             )
         else:
             transfer_index, remask_index, quality_scores = self._step_standard(
@@ -747,6 +753,7 @@ class MDLMSampler:
                             remdm_eta_cap=params["remdm_eta_cap"],
                             remdm_ton=params["remdm_ton"],
                             remdm_toff=params["remdm_toff"],
+                            remedi_threshold=params.get("remedi_threshold", float("inf")),
                         )
                     )
 
@@ -869,7 +876,10 @@ class MDLMSampler:
                 end = min(start + block_size, prompt_lens[j] + max_new_tokens, T)
                 if start < end:
                     width = end - start
-                    block_mask_index[j, :width] = (x[j, start:end] == mask_id)
+                    if remasking == "remedi":
+                        block_mask_index[j, :width] = gen_region_mask[j, start:end]
+                    else:
+                        block_mask_index[j, :width] = (x[j, start:end] == mask_id)
 
             def _clamp(x0_p: torch.Tensor, j: int, _b: int = b, _pl: list = prompt_lens) -> None:
                 x0_p[j, _pl[j] + (_b + 1) * block_size :] = -np.inf
@@ -1056,7 +1066,10 @@ class MDLMSampler:
                 width = max(0, min(seq_lens[j], stop) - start)
                 widths.append(width)
                 if width > 0:
-                    block_mask_index[j, :width] = x[j, start : start + width] == mask_id
+                    if remasking == "remedi":
+                        block_mask_index[j, :width] = revisitable_region[j, start : start + width]
+                    else:
+                        block_mask_index[j, :width] = x[j, start : start + width] == mask_id
 
             def _clamp(
                 x0_p: torch.Tensor, j: int,

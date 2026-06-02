@@ -26,6 +26,9 @@ backplay_threshold = 0.75
 backplay_stride = 4
 backplay_block_buffer = 4
 
+# RemeDi remasking (used when remasking = "remedi")
+remedi_threshold = 0.0
+
 # Inference statistics
 show_stats = false
 show_steps = true

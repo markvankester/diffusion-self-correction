@@ -60,6 +60,7 @@ class MDLMSamplerConfig(BaseSamplerConfig):
     remdm_eta_cap: float = 1.0      # Hard upper bound on σ (ReMDM)
     remdm_ton: float = 1.0          # Time t at which ReMDM turns ON (ReMDM-switch)
     remdm_toff: float = 0.0         # Time t at which ReMDM turns OFF (ReMDM-switch)
+    remedi_threshold: float = float("inf") # Confidence threshold below which to remask tokens in RemeDi
 
 
 def unpack_sampler_config(config: MDLMSamplerConfig, kwargs: dict) -> dict:
@@ -76,7 +77,7 @@ def unpack_sampler_config(config: MDLMSamplerConfig, kwargs: dict) -> dict:
         "prism_eta", "prism_quality_threshold", "prism_single_block_infill",
         "backplay_budget", "backplay_threshold", "backplay_stride",
         "backplay_block_buffer", "remdm_eta_rescale", "remdm_eta_cap",
-        "remdm_ton", "remdm_toff"
+        "remdm_ton", "remdm_toff", "remedi_threshold"
     ]
     for field_name in fields:
         params[field_name] = kwargs.get(field_name, getattr(config, field_name))

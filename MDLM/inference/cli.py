@@ -59,6 +59,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--remdm_eta_cap", type=float, default=None)
     parser.add_argument("--remdm_ton", type=float, default=None)
     parser.add_argument("--remdm_toff", type=float, default=None)
+    parser.add_argument("--remedi_threshold", type=float, default=None)
 
     parser.add_argument("--prompts", type=str, nargs="+", default=None)
     parser.add_argument("--prompt_file", type=str, default=None)
@@ -211,4 +212,5 @@ def _sampler_kwargs(args: argparse.Namespace) -> dict:
         "remdm_eta_cap": args.remdm_eta_cap,
         "remdm_ton": args.remdm_ton,
         "remdm_toff": args.remdm_toff,
+        "remedi_threshold": args.remedi_threshold,
     }
