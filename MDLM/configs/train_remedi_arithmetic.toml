@@ -20,7 +20,7 @@ grad_accum = 1
 lr = 3e-4
 lr_scheduler_type = "constant_with_warmup"      # Options: "linear", "cosine", "constant", "constant_with_warmup", "cosine_with_restarts", "polynomial", "inverse_sqrt".
 weight_decay = 0.05
-max_steps = 200000
+max_steps = 400000
 warmup_steps = 2000
 
 # Diffusion loss
