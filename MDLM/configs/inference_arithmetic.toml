@@ -2,16 +2,16 @@
 
 # Checkpoint and device
 task = "arithmetic"                          # Options: "arithmetic", "sudoku"
-checkpoint = "./checkpoints/arithmetic/final2/checkpoint-250000"
+#checkpoint = "./checkpoints/arithmetic/final2/checkpoint-250000"
 #checkpoint = "./checkpoints/arithmetic/prism/checkpoint-100000"     # PRISM Checkpoint.
 #checkpoint = "./checkpoints/arithmetic/backplay/checkpoint-400000"    # BackPlay Checkpoint.
-#checkpoint = "./checkpoints/arithmetic/remedi/checkpoint-200000"
+checkpoint = "./checkpoints/arithmetic/remedi2/checkpoint-400000"
 device = "cuda"                              # Options: "cuda", "cpu", "auto"
 
 # Sampling
 steps = 16
 max_length = 20
-remasking = "low_confidence"                 # Options: "low_confidence", "random", "prism", "backplay", "remedi", "remdm_conf"
+remasking = "remedi"                 # Options: "low_confidence", "random", "prism", "backplay", "remedi", "remdm_conf"
 
 # ReMDM confidence-based remasking (used when remasking = "remdm_conf")
 remdm_eta_rescale = 1                        # Rescale factor for σ_max (0 = no remasking, 1 = full).
