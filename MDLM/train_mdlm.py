@@ -10,16 +10,15 @@ CLI flags override any TOML value if provided.
 from pathlib import Path
 import sys
 import os
-import tomllib
 
-# Allow running directly as a script from any working directory
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import argparse
-
 import torch
-from transformers import AutoTokenizer, DataCollatorForSeq2Seq
+from transformers import DataCollatorForSeq2Seq
+
+from MDLM.utils import load_config_file, build_tokenizer, resolve_config_path
 
 
 from backbones.llada.config import MDLMConfig
@@ -32,23 +31,11 @@ from MDLM.tasks import get_task_adapter
 
 
 CONFIG_DIR = Path(__file__).resolve().parent / "configs"
-DEFAULT_CONFIG_PATH = CONFIG_DIR / "train_arithmetic.toml"
+DEFAULT_CONFIG_PATH = CONFIG_DIR / "train_mdlm_arithmetic.toml"
 TASK_CONFIG_PATHS = {
-    "arithmetic": CONFIG_DIR / "train_arithmetic.toml",
-    "sudoku": CONFIG_DIR / "train_sudoku.toml",
+    "arithmetic": CONFIG_DIR / "train_mdlm_arithmetic.toml",
+    "sudoku": CONFIG_DIR / "train_mdlm_sudoku.toml",
 }
-
-
-# ============================================================================
-# Config / Argument Parsing
-# ============================================================================
-
-def load_config_file(config_path: str | os.PathLike) -> dict:
-    with open(config_path, "rb") as f:
-        config = tomllib.load(f)
-    if not isinstance(config, dict):
-        raise ValueError("Config file must contain a top-level TOML table.")
-    return config
 
 
 def parse_args() -> argparse.Namespace:
@@ -114,35 +101,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--eval_fraction", type=float, default=None,
                         help="Fraction of training data used as eval split (Sudoku only; e.g. 0.05).")
 
-    # Load TOML first, then let CLI flags override
     initial_args, _ = parser.parse_known_args()
-    config_path = _default_config_path(initial_args)
+    config_path = resolve_config_path(
+        initial_args.config,
+        initial_args.task,
+        TASK_CONFIG_PATHS,
+        DEFAULT_CONFIG_PATH,
+    )
     parser.set_defaults(**load_config_file(config_path))
     parser.set_defaults(config=str(config_path))
     return parser.parse_args()
-
-
-def _default_config_path(args: argparse.Namespace) -> Path:
-    if args.config:
-        return Path(args.config)
-    if args.task in TASK_CONFIG_PATHS:
-        return TASK_CONFIG_PATHS[args.task]
-    return DEFAULT_CONFIG_PATH
-
-
-# ============================================================================
-# Setup Helpers
-# ============================================================================
-
-def build_tokenizer(tokenizer_id: str):
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_id)
-
-    if tokenizer.mask_token is None:
-        tokenizer.add_special_tokens({"mask_token": "[MASK]"})
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    return tokenizer
 
 
 def build_model(args, tokenizer) -> MDLMModelLM:

@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH --job-name=sweep_arithmetic
-#SBATCH --time=05:00:00
+#SBATCH --job-name=sweep_sudoku
+#SBATCH --time=01:00:00
 #SBATCH -N 1
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=gpu_a100
@@ -11,16 +11,15 @@ source $HOME/.bashrc
 cd $HOME/diffusion-self-correction
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
-CHECKPOINTS=("checkpoints/arithmetic/final2/checkpoint-250000" 
-             "checkpoints/arithmetic/prism/checkpoint-100000"
-             "checkpoints/arithmetic/remedi/checkpoint-200000")
+CHECKPOINTS=("checkpoints/sudoku/baseline/Run 2/checkpoint-200000" 
+             "checkpoints/sudoku/prism/checkpoint-100000"
+             "checkpoints/sudoku/remedi/checkpoint-200000")
 METHODS=("remdm_conf" "prism" "remedi")
 
 uv run python scripts/run_hyperparam_sweep.py \
-    --task arithmetic \
+    --task sudoku \
     --checkpoint "${CHECKPOINTS[$SLURM_ARRAY_TASK_ID]}" \
     --methods ${METHODS[$SLURM_ARRAY_TASK_ID]//,/ } \
-    --num_prompts 1000 \
-    --dataset_path data/arithmetic_test_corrupted.jsonl \
-    --output sweep_results/arithmetic_sweep_corrupted_${SLURM_ARRAY_TASK_ID}.csv \
+    --num_prompts 100 \
+    --output sweep_results/sudoku_sweep_${SLURM_ARRAY_TASK_ID}.csv \
     --save_examples

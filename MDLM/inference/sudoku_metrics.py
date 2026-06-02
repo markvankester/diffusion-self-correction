@@ -21,6 +21,7 @@ class SudokuMetrics:
         prompt: str,
         solution: str,
         output: str,
+        editable_mask: list[bool] | None = None,
         remasking_metrics: dict | None = None,
     ) -> None:
         board_match = output == solution
@@ -28,7 +29,12 @@ class SudokuMetrics:
         cells_to_fill = 0
 
         for pos in range(81):
-            if prompt[pos] == "0":
+            is_editable = (
+                bool(editable_mask[pos])
+                if editable_mask is not None and pos < len(editable_mask)
+                else prompt[pos] == "0"
+            )
+            if is_editable:
                 cells_to_fill += 1
                 cell_matches += int(output[pos] == solution[pos])
 
@@ -84,6 +90,14 @@ class SudokuMetrics:
         print(f"  Board-Level Accuracy: {board_acc:.1f}% ({self.total_exact_matches}/{total_puzzles})")
         print(f"  Cell-Level Accuracy : {cell_acc:.1f}% ({self.total_cell_matches}/{self.total_cells_to_fill})")
         remasking = self.remasking.summary()
+        if remasking["injected_error_count"]:
+            injected_pct = remasking["injected_error_remasked_pct"]
+            print(
+                "  Injected Error Remask: "
+                f"{_fmt_pct(injected_pct)} "
+                f"({remasking['injected_error_remasked_count']}/{remasking['injected_error_count']}), "
+                f"avg step {_fmt_num(remasking['injected_error_avg_first_remask_step'])}"
+            )
         if remasking["correct_cell_opportunity_count"] or remasking["model_generated_error_count"]:
             false_pct = remasking["false_remasked_cell_pct"]
             model_pct = remasking["model_generated_error_remasked_pct"]

@@ -7,7 +7,6 @@ Fine-tune a pretrained MDLM with the PRISM quality head.
 from pathlib import Path
 import sys
 import os
-import tomllib
 import argparse
 
 import torch
@@ -18,6 +17,7 @@ from transformers import DataCollatorForSeq2Seq, PreTrainedTokenizerFast
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from MDLM.utils import load_config_file
 from backbones.llada.config import MDLMConfig
 from backbones.llada.model import MDLMModelLM
 from diffusion.schedules import LinearAlphaScheduler
@@ -25,12 +25,8 @@ from diffusion.prism import PRISMHead, PRISMTrainer, PRISMConfig
 from data.processing.collators import NoAttentionMaskWrapper
 from MDLM.tasks import get_task_adapter
 
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "configs" / "prism_arithmetic.toml"
+DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "configs" / "train_prism_arithmetic.toml"
 
-def load_config_file(config_path: str | os.PathLike) -> dict:
-    with open(config_path, "rb") as f:
-        config = tomllib.load(f)
-    return config
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fine-tune MDLM with PRISM")

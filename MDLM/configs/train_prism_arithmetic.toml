@@ -1,0 +1,31 @@
+# PRISM fine-tuning config for arithmetic.
+
+task = "arithmetic"                          # Options: "arithmetic", "sudoku"
+
+# Data and paths
+checkpoint = "./checkpoints/arithmetic/final2/checkpoint-250000"    # Path to a pretrained checkpoint to start training from.
+data_path = "data/arithmetic_train.jsonl"                           # Training dataset path.
+eval_data_path = "data/arithmetic_eval.jsonl"                       # Evaluation dataset path.
+output_dir = "./checkpoints/arithmetic/prism"                       # Directory for checkpoints and trainer outputs.
+limit_data = 0                                                      # Number of rows to load (0 for the full dataset).
+mask_until_token = "="                                              # Optional: set labels to -100 for all tokens up to and including this token.
+
+# PRISM adapter
+prism_head_type = "linear"                   # Options: "linear", "scalar", "attention"
+
+# PRISM objective
+prism_lambda = 5                             # Loss weighting coefficient for PRISM quality head.
+prism_k = 4                                  # Unmasking candidate set size.
+
+# Optimization
+batch_size = 256
+grad_accum = 1
+lr = 3e-4
+max_steps = 400000
+warmup_steps = 2000
+
+# Evaluation
+eval_steps = 1000
+
+# Reporting
+run_name = "prism-arithmetic"

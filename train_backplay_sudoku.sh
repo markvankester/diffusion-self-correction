@@ -11,4 +11,4 @@ cd $HOME/diffusion-self-correction
 
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
-uv run MDLM/train_backplay.py --config MDLM/configs/backplay_sudoku.toml
+uv run MDLM/train_backplay.py --config MDLM/configs/train_backplay_sudoku.toml

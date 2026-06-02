@@ -23,3 +23,4 @@ sweep_results/
 # Large/generated datasets, while keeping data/ source code tracked
 data/*.jsonl
 data/*.npy
+data/*.csv

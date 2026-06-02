@@ -11,11 +11,13 @@ def render_sudoku_grid(
     flat: str,
     clue_str: str | None = None,
     solution_str: str | None = None,
+    injected_error_mask: list[bool] | None = None,
 ) -> str:
     """Format an 81-character Sudoku string as a readable 9x9 grid."""
     bold_yellow = "\033[1;33m"
     green = "\033[92m"
     red = "\033[91m"
+    magenta = "\033[1;95m"
     reset = "\033[0m"
 
     lines = []
@@ -28,8 +30,15 @@ def render_sudoku_grid(
                 ch = "."
 
             is_clue = clue_str is not None and pos < len(clue_str) and clue_str[pos] != "0"
+            is_injected_error = (
+                injected_error_mask is not None
+                and pos < len(injected_error_mask)
+                and injected_error_mask[pos]
+            )
             if is_clue:
                 cell = f"{bold_yellow}{ch}{reset}"
+            elif is_injected_error:
+                cell = f"{magenta}{ch}{reset}"
             elif solution_str is not None and pos < len(solution_str):
                 cell = f"{green if flat[pos] == solution_str[pos] else red}{ch}{reset}"
             else:
@@ -51,6 +60,7 @@ def write_sudoku_steps_html(
     solution_str: str | None,
     puzzle_idx: int,
     html_path: str | os.PathLike,
+    injected_error_mask: list[bool] | None = None,
 ) -> None:
     """Write the full unmasking history for a single Sudoku puzzle as HTML."""
     histories = output.histories
@@ -79,6 +89,11 @@ def write_sudoku_steps_html(
             ch = tid_to_char(tid)
             is_mask = tid == mask_id
             is_clue = pos < len(prompt) and prompt[pos] != "0"
+            is_injected_error = (
+                injected_error_mask is not None
+                and pos < len(injected_error_mask)
+                and injected_error_mask[pos]
+            )
             is_newly = (
                 prev_ids_raw is not None
                 and pos < len(prev_ids_raw)
@@ -88,6 +103,12 @@ def write_sudoku_steps_html(
 
             if is_clue:
                 css = "clue"
+            elif is_injected_error and is_mask:
+                css = "injected masked"
+            elif is_injected_error and solution_str and pos < len(solution_str):
+                css = "injected-correct" if ch == solution_str[pos] else "injected-wrong"
+            elif is_injected_error:
+                css = "injected"
             elif is_mask:
                 css = "masked"
             elif is_final and solution_str and pos < len(solution_str):
@@ -109,6 +130,10 @@ def write_sudoku_steps_html(
 
             tooltip_parts = []
             subtext = ""
+            if is_injected_error:
+                tooltip_parts.append("Injected error cell")
+                if solution_str and pos < len(solution_str):
+                    tooltip_parts.append(f"Target: {solution_str[pos]}")
             if curr_conf is not None and not is_clue and (is_mask or is_newly):
                 conf = curr_conf[pos].item()
                 tooltip_parts.append(f"Confidence: {conf:.2f}")
@@ -246,6 +271,9 @@ def _sudoku_steps_page(
   .cell.masked {{ color: #cbd5e1; background: #f8fafc; }}
   .cell.new-fill, .cell.new-correct, .cell.correct {{ color: #065f46; background: #ecfdf5; border: 1px solid #a7f3d0; }}
   .cell.new-wrong {{ color: #9d174d; background: #fdf2f8; border: 1px solid #fbcfe8; }}
+  .cell.injected, .cell.injected-wrong {{ color: #86198f; background: #fdf4ff; border: 2px solid #e879f9; box-shadow: 0 0 0 2px rgba(232,121,249,0.18); }}
+  .cell.injected-correct {{ color: #047857; background: #ecfdf5; border: 2px solid #34d399; box-shadow: 0 0 0 2px rgba(52,211,153,0.18); }}
+  .cell.injected.masked {{ color: #86198f; background: repeating-linear-gradient(135deg, #fdf4ff 0, #fdf4ff 6px, #fae8ff 6px, #fae8ff 12px); border: 2px solid #e879f9; }}
   .cell.filled {{ color: var(--filled); background: #fff; border: 1px solid #e2e8f0; }}
   .cell.wrong {{ color: #991b1b; background: #fef2f2; border: 1px solid #fecaca; }}
   .cell.bl {{ border-left: 2.5px solid #64748b !important; margin-left: 4px; }}
@@ -263,6 +291,7 @@ def _sudoku_steps_page(
   <div class="leg"><div class="leg-box" style="background:#f8fafc;border:1px solid #e2e8f0"></div> still masked</div>
   <div class="leg"><div class="leg-box" style="background:#ecfdf5;border:1px solid #a7f3d0"></div> correct fill</div>
   <div class="leg"><div class="leg-box" style="background:#fdf2f8;border:1px solid #fbcfe8"></div> wrong new fill</div>
+  <div class="leg"><div class="leg-box" style="background:#fdf4ff;border:2px solid #e879f9"></div> injected error cell</div>
 </div>
 {sections}
 </body>

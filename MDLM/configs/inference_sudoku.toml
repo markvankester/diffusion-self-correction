@@ -1,33 +1,35 @@
 # Sudoku inference config.
 
 # Checkpoint and device
-task = "sudoku"
-checkpoint = "./checkpoints/sudoku/baseline/Run 2/checkpoint-200000"
-device = "cuda"                   # Options: "cuda", "cpu", "auto"
+task = "sudoku"                              # Options: "arithmetic", "sudoku"
+#checkpoint = "./checkpoints/sudoku/baseline/Run 2/checkpoint-200000"
+#checkpoint = "./checkpoints/sudoku/prism/checkpoint-100000"
+checkpoint = "./checkpoints/sudoku/remedi/checkpoint-200000"
+device = "cuda"                              # Options: "cuda", "cpu", "auto"
 
 # Sampling
 steps = 16
 max_length = 81
-remasking = "low_confidence"      # Options: "low_confidence", "random", "prism", "backplay", "remdm_conf"
+remasking = "remedi"                         # Options: "low_confidence", "random", "prism", "backplay", "remedi", "remdm_conf"
 
 # ReMDM confidence-based remasking (used when remasking = "remdm_conf")
-remdm_eta_rescale = 0.5           # Rescale factor for σ_max (0 = no remasking, 1 = full)
-remdm_eta_cap = 1.0               # Hard upper bound on σ
-remdm_ton = 0.5                   # Time t at which ReMDM turns ON (ReMDM-switch)
-remdm_toff = 0.0                  # Time t at which ReMDM turns OFF (ReMDM-switch)
+remdm_eta_rescale = 0.5                      # Rescale factor for σ_max (0 = no remasking, 1 = full).
+remdm_eta_cap = 1.0                          # Hard upper bound on σ.
+remdm_ton = 0.5                              # Time t at which ReMDM turns ON (ReMDM-switch).
+remdm_toff = 0.0                             # Time t at which ReMDM turns OFF (ReMDM-switch).
 
 # PRISM remasking (used when remasking = "prism")
-prism_eta = 0.2                   # Probability of remasking a token per step
-prism_quality_threshold = 0.6     # Only remask tokens with quality below this threshold
+prism_eta = 0.2                              # Probability of remasking a token per step.
+prism_quality_threshold = 0.6                # Only remask tokens with quality below this threshold.
 
 # BackPlay remasking (used when remasking = "backplay")
-backplay_budget = 2
-backplay_threshold = 0.75
-backplay_stride = 4
-backplay_block_buffer = 4
+backplay_budget = 2                          # Max correction attempts per revision step.
+backplay_threshold = 0.75                    # Revision activation threshold.
+backplay_stride = 4                          # Block revision stride.
+backplay_block_buffer = 4                    # Context buffer size.
 
 # RemeDi remasking (used when remasking = "remedi")
-remedi_threshold = 0.0
+remedi_threshold = -6.0                      # RemeDi unmasking policy logit threshold.
 
 # Inference statistics
 show_stats = false
@@ -36,5 +38,5 @@ show_steps = true
 # Dataset prompts
 use_dataset = true
 dataset_path = "data/sudoku-test-data.npy"
-dataset_mode = "first"            # Options: "first", "random"
-num_prompts = 10000
+dataset_mode = "first"                       # Options: "first", "random"
+num_prompts = 10

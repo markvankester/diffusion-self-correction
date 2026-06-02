@@ -32,6 +32,9 @@ def run_prompts(
     solutions: list[str] | None = None,
     show_steps: bool = False,
     steps_log_dir: str | os.PathLike | None = None,
+    revisitable_regions: list[list[bool]] | None = None,
+    injected_error_masks: list[list[bool]] | None = None,
+    initial_confidence_texts: list[str] | None = None,
     quiet: bool = False,
 ) -> ArithmeticMetrics | SudokuMetrics | None:
     """Run MDLM sampling on prompts and print results."""
@@ -45,6 +48,8 @@ def run_prompts(
     )
 
     config_params = {k: v for k, v in sampler_kwargs.items() if v is not None}
+    if task_name == "sudoku" and "suppress_tokens" not in config_params:
+        config_params["suppress_tokens"] = _sudoku_suppress_tokens(tokenizer)
     config_params["return_dict"] = True
     sample_config = MDLMSamplerConfig(**config_params)
 
@@ -81,6 +86,21 @@ def run_prompts(
 
     for idx, prompt in enumerate(prompts, start=1):
         prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)
+        prompt_revisitable_region = (
+            revisitable_regions[idx - 1]
+            if revisitable_regions is not None and idx - 1 < len(revisitable_regions)
+            else None
+        )
+        prompt_injected_error_mask = (
+            injected_error_masks[idx - 1]
+            if injected_error_masks is not None and idx - 1 < len(injected_error_masks)
+            else None
+        )
+        prompt_initial_confidence_text = (
+            initial_confidence_texts[idx - 1]
+            if initial_confidence_texts is not None and idx - 1 < len(initial_confidence_texts)
+            else None
+        )
         if infill:
             output, full_answer, display_prompt_ids, revisitable_region = _run_infill(
                 sampler=sampler,
@@ -90,6 +110,8 @@ def run_prompts(
                 max_length=max_length,
                 task_name=task_name,
                 sample_config=sample_config,
+                revisitable_region_override=prompt_revisitable_region,
+                initial_confidence_text=prompt_initial_confidence_text,
             )
             if not quiet:
                 print(f"\n  [{idx}] [Original] : {prompt}")
@@ -106,6 +128,7 @@ def run_prompts(
                 run_log_dir=run_log_dir,
                 metrics=sudoku_metrics,
                 revisitable_region=revisitable_region,
+                injected_error_mask=prompt_injected_error_mask,
                 quiet=quiet,
             )
             _handle_arithmetic_result(
@@ -184,6 +207,21 @@ def _make_run_log_dir(
     return run_log_dir
 
 
+def _sudoku_suppress_tokens(tokenizer) -> list[int]:
+    return [
+        token_id
+        for token_id in (
+            tokenizer.mask_token_id,
+            tokenizer.bos_token_id,
+            tokenizer.unk_token_id,
+            tokenizer.pad_token_id,
+            tokenizer.eos_token_id,
+            tokenizer.convert_tokens_to_ids("0"),
+        )
+        if token_id is not None
+    ]
+
+
 def _run_name(config_params: dict) -> str:
     remasking = _safe_name(config_params.get("remasking", "none"))
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H%M%S")
@@ -212,6 +250,8 @@ def _run_infill(
     max_length: int,
     task_name: str,
     sample_config: MDLMSamplerConfig,
+    revisitable_region_override: list[bool] | None = None,
+    initial_confidence_text: str | None = None,
 ):
     eq_token_id = tokenizer.convert_tokens_to_ids("=")
     if eq_token_id in prompt_ids:
@@ -245,10 +285,19 @@ def _run_infill(
             display_prompt_ids = prompt_ids
             display_prefix = prompt
 
+    if revisitable_region_override is not None:
+        width = min(len(revisitable_region), len(revisitable_region_override))
+        revisitable_region[:width] = [bool(v) for v in revisitable_region_override[:width]]
+
     infill_kwargs = {"revisitable_region": [revisitable_region]}
     if sample_config.remasking == "remdm_conf":
+        confidence_ids = (
+            tokenizer.encode(initial_confidence_text, add_special_tokens=False)
+            if initial_confidence_text is not None
+            else masked_prompt_ids
+        )
         input_tensor = torch.tensor(
-            [masked_prompt_ids],
+            [confidence_ids],
             dtype=torch.long,
             device=sampler.model.device,
         )
@@ -298,38 +347,69 @@ def _handle_sudoku_result(
     run_log_dir: Path | None,
     metrics: SudokuMetrics,
     revisitable_region: list[bool],
+    injected_error_mask: list[bool] | None = None,
     quiet: bool = False,
 ) -> None:
     if task_name != "sudoku" or len(full_answer) != 81:
         return
 
     solution = solutions[idx - 1] if solutions and idx - 1 < len(solutions) else None
+    clue_prompt = _sudoku_clue_prompt(prompt, revisitable_region)
 
     if solution:
         remasking_metrics = compute_remasking_metrics(
             output=output,
             target_ids=tokenizer.encode(solution, add_special_tokens=False),
             editable_mask=revisitable_region,
+            injected_error_mask=injected_error_mask,
             sample_idx=0,
             mask_token_id=tokenizer.mask_token_id,
         )
-        metrics.add(idx, prompt, solution, full_answer, remasking_metrics=remasking_metrics)
+        metrics.add(
+            idx,
+            prompt,
+            solution,
+            full_answer,
+            editable_mask=revisitable_region,
+            remasking_metrics=remasking_metrics,
+        )
         if not quiet:
             print("\n  Ground truth (bold=clue):")
-            print(render_sudoku_grid(solution, clue_str=prompt))
+            print(
+                render_sudoku_grid(
+                    solution,
+                    clue_str=clue_prompt,
+                    injected_error_mask=injected_error_mask,
+                )
+            )
+            _print_sudoku_injected_error_report(
+                output_obj=output,
+                prompt=prompt,
+                output=full_answer,
+                solution=solution,
+                injected_error_mask=injected_error_mask,
+            )
 
     if not quiet:
-        print("\n  Model output (bold=clue, green=correct, red=wrong):")
-        print(render_sudoku_grid(full_answer, clue_str=prompt, solution_str=solution))
+        print("\n  Model output (bold=clue, magenta=injected error, green=correct, red=wrong):")
+        print(
+            render_sudoku_grid(
+                full_answer,
+                clue_str=clue_prompt,
+                solution_str=solution,
+                injected_error_mask=injected_error_mask,
+            )
+        )
 
     if show_steps and output.histories is not None and run_log_dir is not None:
         write_sudoku_steps_html(
             output=output,
             tokenizer=tokenizer,
-            prompt=prompt,
+            prompt=clue_prompt,
             solution_str=solution,
             puzzle_idx=idx,
             html_path=run_log_dir / f"puzzle_{idx:03d}.html",
+            injected_error_mask=injected_error_mask,
         )
         _save_trajectory_jsonl(
             run_log_dir=run_log_dir,
@@ -341,6 +421,68 @@ def _handle_sudoku_result(
             tokenizer=tokenizer,
             display_prompt_ids=None,
         )
+
+
+def _sudoku_clue_prompt(prompt: str, revisitable_region: list[bool]) -> str:
+    if len(prompt) != 81 or len(revisitable_region) < 81:
+        return prompt
+    chars = []
+    for pos, ch in enumerate(prompt):
+        chars.append("0" if revisitable_region[pos] else ch)
+    return "".join(chars)
+
+
+def _print_sudoku_injected_error_report(
+    output_obj,
+    prompt: str,
+    output: str,
+    solution: str,
+    injected_error_mask: list[bool] | None,
+) -> None:
+    if not injected_error_mask:
+        return
+
+    positions = [
+        pos for pos, is_error in enumerate(injected_error_mask[:81])
+        if is_error
+    ]
+    if not positions:
+        return
+
+    step_by_position = _first_remask_steps_by_position(output_obj, positions)
+
+    print("\n  Injected error cells:")
+    for pos in positions:
+        row = pos // 9 + 1
+        col = pos % 9 + 1
+        initial = prompt[pos] if pos < len(prompt) else "?"
+        target = solution[pos] if pos < len(solution) else "?"
+        final = output[pos] if pos < len(output) else "?"
+        status = "recovered" if final == target else "still wrong"
+        remask_step = step_by_position.get(pos)
+        remask_text = f"remasked step {remask_step}" if remask_step is not None else "not remasked"
+        print(
+            f"    r{row}c{col} pos={pos}: "
+            f"initial={initial} target={target} final={final} "
+            f"{status}, {remask_text}"
+        )
+
+
+def _first_remask_steps_by_position(output, positions: list[int]) -> dict[int, int]:
+    if output.remask_indices is None:
+        return {}
+
+    pending = set(positions)
+    first_steps: dict[int, int] = {}
+    for step_idx, remask_tensor in enumerate(output.remask_indices, start=1):
+        if not pending:
+            break
+        remasked = remask_tensor[0].bool()
+        for pos in list(pending):
+            if pos < remasked.numel() and bool(remasked[pos].item()):
+                first_steps[pos] = step_idx
+                pending.remove(pos)
+    return first_steps
 
 
 def _handle_arithmetic_result(

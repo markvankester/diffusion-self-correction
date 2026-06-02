@@ -11,4 +11,4 @@ cd $HOME/diffusion-self-correction
 
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
-uv run MDLM/train_mdlm.py --config MDLM/configs/train_arithmetic.toml
+uv run MDLM/train_mdlm.py --config MDLM/configs/train_mdlm_arithmetic.toml

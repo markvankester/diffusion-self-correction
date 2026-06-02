@@ -1,7 +1,7 @@
-# Default inference selector for `uv run MDLM/run_inference.py`.
+# Default inference selector config for MDLM.
 #
-# Change only this value to switch between task-specific inference configs:
+# Change task to switch between task-specific inference configs:
 #   "arithmetic" -> MDLM/configs/inference_arithmetic.toml
 #   "sudoku"     -> MDLM/configs/inference_sudoku.toml
 
-task = "arithmetic"
+task = "arithmetic"                          # Options: "arithmetic", "sudoku"

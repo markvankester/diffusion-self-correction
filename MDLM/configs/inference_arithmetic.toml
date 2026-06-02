@@ -1,36 +1,36 @@
 # Arithmetic inference config.
 
 # Checkpoint and device
-task = "arithmetic"
-#checkpoint = "./checkpoints/arithmetic/final2/checkpoint-250000"
-#checkpoint = "./checkpoints/arithmetic/prism/checkpoint-100000"     # PRISM Checkpoint
-#checkpoint = "./checkpoints/arithmetic/backplay/checkpoint-400000"    # BackPlay Checkpoint
-checkpoint = "./checkpoints/arithmetic/remedi/checkpoint-200000"
-device = "cuda"                   # Options: "cuda", "cpu", "auto"
+task = "arithmetic"                          # Options: "arithmetic", "sudoku"
+checkpoint = "./checkpoints/arithmetic/final2/checkpoint-250000"
+#checkpoint = "./checkpoints/arithmetic/prism/checkpoint-100000"     # PRISM Checkpoint.
+#checkpoint = "./checkpoints/arithmetic/backplay/checkpoint-400000"    # BackPlay Checkpoint.
+#checkpoint = "./checkpoints/arithmetic/remedi/checkpoint-200000"
+device = "cuda"                              # Options: "cuda", "cpu", "auto"
 
 # Sampling
 steps = 16
 max_length = 20
-remasking = "remedi"      # Options: "low_confidence", "random", "prism", "remedi", "remdm_conf"
+remasking = "low_confidence"                 # Options: "low_confidence", "random", "prism", "backplay", "remedi", "remdm_conf"
 
 # ReMDM confidence-based remasking (used when remasking = "remdm_conf")
-remdm_eta_rescale = 1           # Rescale factor for σ_max (0 = no remasking, 1 = full)
-remdm_eta_cap = 1.0               # Hard upper bound on σ
-remdm_ton = 0.8                   # Time t at which ReMDM turns ON (ReMDM-switch)
-remdm_toff = 0.0                  # Time t at which ReMDM turns OFF (ReMDM-switch)
+remdm_eta_rescale = 1                        # Rescale factor for σ_max (0 = no remasking, 1 = full).
+remdm_eta_cap = 1.0                          # Hard upper bound on σ.
+remdm_ton = 0.8                              # Time t at which ReMDM turns ON (ReMDM-switch).
+remdm_toff = 0.0                             # Time t at which ReMDM turns OFF (ReMDM-switch).
 
 # PRISM remasking (used when remasking = "prism")
-prism_eta = 0.5                   # Probability of remasking a token per step
-prism_quality_threshold = 0.9     # Only remask tokens with quality below this threshold
+prism_eta = 0.5                              # Probability of remasking a token per step.
+prism_quality_threshold = 0.9                # Only remask tokens with quality below this threshold.
 
 # BackPlay remasking (used when remasking = "backplay")
-backplay_budget = 2
-backplay_threshold = 0.01
-backplay_stride = 2
-backplay_block_buffer = 4
+backplay_budget = 2                          # Max correction attempts per revision step.
+backplay_threshold = 0.01                    # Revision activation threshold.
+backplay_stride = 2                          # Block revision stride.
+backplay_block_buffer = 4                    # Context buffer size.
 
 # RemeDi remasking (used when remasking = "remedi")
-remedi_threshold = 0.0
+remedi_threshold = 0.0                       # RemeDi unmasking policy logit threshold.
 
 # Inference statistics
 show_stats = false
@@ -39,6 +39,6 @@ show_steps = true
 # Dataset prompts
 use_dataset = true
 dataset_path = "data/arithmetic_test_corrupted.jsonl"
-dataset_mode = "first"           # Options: "first", "random"
-num_prompts = 100
+dataset_mode = "first"                       # Options: "first", "random"
+num_prompts = 10
 prompt_delimiter = "="

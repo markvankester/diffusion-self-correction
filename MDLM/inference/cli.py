@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import argparse
 import os
-import tomllib
 from pathlib import Path
 
 import torch
+
+from MDLM.utils import load_config_file
 
 from MDLM.tasks import get_task_adapter
 
@@ -19,17 +20,6 @@ TASK_CONFIG_PATHS = {
     "arithmetic": CONFIG_DIR / "inference_arithmetic.toml",
     "sudoku": CONFIG_DIR / "inference_sudoku.toml",
 }
-
-
-def load_config_file(config_path: str | os.PathLike) -> dict:
-    """Load inference parameters from a TOML file."""
-    if not os.path.exists(config_path):
-        return {}
-    with open(config_path, "rb") as f:
-        config = tomllib.load(f)
-    if not isinstance(config, dict):
-        raise ValueError("Config file must contain a top-level TOML table.")
-    return config
 
 
 def parse_args() -> argparse.Namespace:
@@ -162,6 +152,9 @@ def main() -> None:
         solutions=getattr(args, "solutions", None),
         show_steps=getattr(args, "show_steps", False),
         steps_log_dir=getattr(args, "steps_log_dir", None),
+        revisitable_regions=getattr(args, "revisitable_regions", None),
+        injected_error_masks=getattr(args, "injected_error_masks", None),
+        initial_confidence_texts=getattr(args, "initial_confidence_texts", None),
     )
     print()
 
@@ -179,6 +172,9 @@ def _resolve_prompts(args: argparse.Namespace, task, toml_config: dict) -> None:
         print(f"[*] Loading {num_print} prompts from dataset ({path}, mode={mode}, task={args.task})...")
         args.prompts = task.load_dataset_prompts(path, mode, num, delim)
         args.solutions = getattr(task, "_solution_strings", None)
+        args.revisitable_regions = getattr(task, "_revisitable_regions", None)
+        args.injected_error_masks = getattr(task, "_injected_error_masks", None)
+        args.initial_confidence_texts = getattr(task, "_initial_confidence_strings", None)
 
     if args.prompts:
         return

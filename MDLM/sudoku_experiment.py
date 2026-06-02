@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import csv
 import sys
+from itertools import product
 from pathlib import Path
 
 if __package__ in (None, ""):
@@ -27,8 +28,9 @@ from data.preprocessing.sudoku import preprocess_sudoku
 from diffusion.sampler import MDLMSampler, MDLMSamplerConfig
 from diffusion.schedules import LinearAlphaScheduler
 from diffusion.remdm import compute_initial_confidence
-from MDLM.run_inference import load_model
+from MDLM.inference.model_loading import load_model
 from MDLM.inference.remasking_metrics import RemaskingMetrics, compute_remasking_metrics
+from MDLM.utils import load_config_file, resolve_config_path
 
 
 R = "\033[0m"
@@ -309,6 +311,59 @@ def load_sudoku_arrays(
     )
 
 
+def load_recovery_metadata(csv_path: str | Path) -> dict[int, dict]:
+    path = Path(csv_path)
+    if not path.exists():
+        return {}
+    metadata = {}
+    with path.open("r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            board_idx = int(row["board_index"])
+            metadata[board_idx] = {
+                "t_frac": float(row["t_frac"]),
+                "difficulty": row["difficulty"],
+                "k": int(row["k"]),
+            }
+    return metadata
+
+
+def get_fallback_metadata(idx: int) -> dict:
+    k_values = [1, 2, 3, 4, 5]
+    t_frac_values = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+    combos = list(product(k_values, t_frac_values))
+    k, t_frac = combos[idx % len(combos)]
+    return {"k": k, "t_frac": t_frac, "difficulty": "unknown"}
+
+
+def load_pregenerated_initial_state(
+    initial_state: np.ndarray,
+    corrupted: np.ndarray,
+    clues: np.ndarray,
+    tokenizer,
+) -> tuple[list[int], list[bool], np.ndarray, list[int]]:
+    mask_id = tokenizer.mask_token_id
+    digit_ids = digit_token_ids(tokenizer)
+
+    input_ids: list[int] = []
+    fully_visible_ids: list[int] = []
+    revisitable_region: list[bool] = []
+    free_masked = np.zeros(81, dtype=np.int8)
+
+    for pos in range(81):
+        fully_visible_ids.append(digit_ids[int(corrupted[pos])])
+        val = int(initial_state[pos])
+        if val == 0:
+            input_ids.append(mask_id)
+            free_masked[pos] = 1
+        else:
+            input_ids.append(digit_ids[val])
+
+        revisitable_region.append(not bool(clues[pos]))
+
+    return input_ids, revisitable_region, free_masked, fully_visible_ids
+
+
 def evaluate_batch(
     sampler: MDLMSampler,
     tokenizer,
@@ -319,6 +374,8 @@ def evaluate_batch(
     error_masks: np.ndarray,
     indices: list[int],
     args: argparse.Namespace,
+    initial_states: np.ndarray | None = None,
+    metadata: dict[int, dict] | None = None,
 ) -> list[dict[str, float | int | str]]:
     sample_config = MDLMSamplerConfig(
         steps=args.steps,
@@ -333,6 +390,9 @@ def evaluate_batch(
         backplay_block_buffer=args.backplay_block_buffer,
         remdm_eta_rescale=args.remdm_eta_rescale,
         remdm_eta_cap=args.remdm_eta_cap,
+        remdm_ton=args.remdm_ton,
+        remdm_toff=args.remdm_toff,
+        remedi_threshold=args.remedi_threshold,
         block_size=args.block_size,
         suppress_tokens=[
             token_id
@@ -364,32 +424,44 @@ def evaluate_batch(
             high=args.t_frac_max,
             size=len(batch_indices),
         )
+        batch_actual_t_fracs = []
 
         for local_i, idx in enumerate(batch_indices):
-            t_frac = float(batch_t_fracs[local_i])
-            input_ids, revisitable, free_masked, fully_visible_ids = forward_diffuse_corrupted_board(
-                corrupted=corrupted[idx],
-                clues=clues[idx],
-                error_mask=error_masks[idx],
-                tokenizer=tokenizer,
-                t_frac=t_frac,
-                scheduler=scheduler,
-                generator=torch_generator,
-            )
+            if initial_states is not None:
+                meta = metadata.get(idx, get_fallback_metadata(idx)) if metadata else get_fallback_metadata(idx)
+                t_frac = meta["t_frac"]
+                input_ids, revisitable, free_masked, fully_visible_ids = load_pregenerated_initial_state(
+                    initial_state=initial_states[idx],
+                    corrupted=corrupted[idx],
+                    clues=clues[idx],
+                    tokenizer=tokenizer,
+                )
+            else:
+                t_frac = float(batch_t_fracs[local_i])
+                input_ids, revisitable, free_masked, fully_visible_ids = forward_diffuse_corrupted_board(
+                    corrupted=corrupted[idx],
+                    clues=clues[idx],
+                    error_mask=error_masks[idx],
+                    tokenizer=tokenizer,
+                    t_frac=t_frac,
+                    scheduler=scheduler,
+                    generator=torch_generator,
+                )
+            batch_actual_t_fracs.append(t_frac)
             batch_inputs.append(input_ids)
             batch_revisitable.append(revisitable)
             batch_free_masked.append(free_masked)
             batch_fully_visible.append(fully_visible_ids)
 
         # Compute initial confidence scores for ReMDM-conf via a forward pass
-        # on the fully-visible boards (before masking). This gives fair ψ scores
+        # on the partially masked boards (at starting t_frac). This gives fair psi scores
         # for injected error tokens that were never predicted by the model.
         infill_kwargs: dict = {
             "revisitable_region": batch_revisitable,
         }
         if args.remasking == "remdm_conf":
             device = next(sampler.model.parameters()).device
-            fv_tensor = torch.tensor(batch_fully_visible, dtype=torch.long, device=device)
+            fv_tensor = torch.tensor(batch_inputs, dtype=torch.long, device=device)
             fv_attn = torch.ones_like(fv_tensor, dtype=torch.long)
             rr_tensor = torch.tensor(batch_revisitable, dtype=torch.bool, device=device)
             initial_confidence = compute_initial_confidence(
@@ -445,11 +517,12 @@ def evaluate_batch(
                 mask_token_id=tokenizer.mask_token_id,
             )
 
+            t_frac = batch_actual_t_fracs[local_i]
             rows.append(
                 {
                     "index": int(idx),
-                    "t_frac": float(batch_t_fracs[local_i]),
-                    "free_cell_mask_probability": float(1.0 - scheduler.alpha(float(batch_t_fracs[local_i]))),
+                    "t_frac": float(t_frac),
+                    "free_cell_mask_probability": float(t_frac) if initial_states is not None else float(1.0 - scheduler.alpha(float(t_frac))),
                     "inserted_error_count": inserted_error_count,
                     "masked_free_cell_count": int(batch_free_masked[local_i].sum()),
                     "all_cell_accuracy": all_cell_accuracy,
@@ -508,7 +581,7 @@ def evaluate_batch(
                     clues=clues[idx],
                     error_mask=error_masks[idx],
                     free_masked=batch_free_masked[local_i],
-                    t_frac=float(batch_t_fracs[local_i]),
+                    t_frac=float(t_frac),
                 )
 
     return rows
@@ -518,7 +591,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run Sudoku recovery inference from a partially diffused corrupted state.",
     )
-    parser.add_argument("--checkpoint", required=True, help="Checkpoint directory.")
+    parser.add_argument("--config", type=str, default=None, help="Path to a TOML config file")
+    parser.add_argument("--checkpoint", default=None, help="Checkpoint directory.")
     parser.add_argument("--data_path", default="data/sudoku-test-data.npy")
     parser.add_argument(
         "--corrupted_boards_path",
@@ -529,6 +603,16 @@ def parse_args() -> argparse.Namespace:
         "--error_masks_path",
         default="data/sudoku-test-data-corrupted-errors.npy",
         help="Pre-generated binary mask of inserted error positions.",
+    )
+    parser.add_argument(
+        "--initial_states_path",
+        default="data/sudoku-test-data-initial-states.npy",
+        help="Path to pre-generated initial recovery states (.npy file). Use 'none' to run runtime diffusion.",
+    )
+    parser.add_argument(
+        "--metadata_csv_path",
+        default=None,
+        help="Path to pre-generated recovery metadata CSV file.",
     )
     parser.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"])
     parser.add_argument("--num_examples", type=int, default=32)
@@ -543,7 +627,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--remasking",
         default="random",
-        choices=["low_confidence", "random", "prism", "backplay", "remdm_conf"],
+        choices=["low_confidence", "random", "prism", "backplay", "remdm_conf", "remedi"],
     )
     parser.add_argument("--stochastic_transfer", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--prism_eta", type=float, default=0.2)
@@ -553,9 +637,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--backplay_stride", type=int, default=4)
     parser.add_argument("--backplay_block_buffer", type=int, default=4)
     parser.add_argument("--remdm_eta_rescale", type=float, default=1.0,
-                        help="ReMDM: rescale factor for σ_max (0=no remasking, 1=full).")
+                        help="ReMDM: rescale factor for sigma_max (0=no remasking, 1=full).")
     parser.add_argument("--remdm_eta_cap", type=float, default=1.0,
-                        help="ReMDM: hard upper bound on σ.")
+                        help="ReMDM: hard upper bound on sigma.")
+    parser.add_argument("--remdm_ton", type=float, default=1.0,
+                        help="ReMDM: time at which ReMDM turns ON.")
+    parser.add_argument("--remdm_toff", type=float, default=0.0,
+                        help="ReMDM: time at which ReMDM turns OFF.")
+    parser.add_argument("--remedi_threshold", type=float, default=0.0,
+                        help="RemeDi: confidence threshold below which to remask tokens.")
     parser.add_argument(
         "--visualize",
         action=argparse.BooleanOptionalAction,
@@ -563,11 +653,30 @@ def parse_args() -> argparse.Namespace:
         help="Print Sudoku grids for the initial state and each reverse-diffusion step.",
     )
     parser.add_argument("--output_csv", default=None)
-    return parser.parse_args()
+
+    initial_args, _ = parser.parse_known_args()
+    config_path = resolve_config_path(
+        initial_args.config,
+        None,
+        {},
+        Path("MDLM/configs/inference_sudoku.toml"),
+    )
+    config_dict = load_config_file(config_path)
+
+    # Set defaults from config
+    valid_keys = {action.dest for action in parser._actions}
+    defaults = {k: v for k, v in config_dict.items() if k in valid_keys}
+    parser.set_defaults(**defaults)
+
+    parsed_args = parser.parse_args()
+    parsed_args.loaded_config = str(config_path) if config_path.exists() else None
+    return parsed_args
 
 
 def main() -> None:
     args = parse_args()
+    if args.checkpoint is None:
+        raise ValueError("Must specify --checkpoint or set it in the config file.")
     if not 0.0 <= args.t_frac_min <= args.t_frac_max <= 1.0:
         raise ValueError("Require 0 <= --t_frac_min <= --t_frac_max <= 1.")
 
@@ -577,9 +686,18 @@ def main() -> None:
         args.device
     )
 
+    initial_states_path = args.initial_states_path
+    if initial_states_path and initial_states_path.lower() == "none":
+        initial_states_path = None
+
     print(f"[*] Device      : {device.type.upper()}")
+    if args.loaded_config:
+        print(f"[*] Loaded config: {args.loaded_config}")
     print(f"[*] Checkpoint  : {args.checkpoint}")
-    print(f"[*] t_frac      : uniform({args.t_frac_min}, {args.t_frac_max})")
+    if initial_states_path:
+        print("[*] t_frac      : from pre-generated initial-state metadata")
+    else:
+        print(f"[*] t_frac      : runtime uniform({args.t_frac_min}, {args.t_frac_max})")
     print(f"[*] remasking   : {args.remasking}")
     if args.visualize:
         print("[*] visualize   : True")
@@ -605,6 +723,29 @@ def main() -> None:
         error_masks_path=args.error_masks_path,
     )
 
+    initial_states = None
+    metadata = {}
+    if initial_states_path:
+        initial_path = Path(initial_states_path)
+        if initial_path.exists():
+            print(f"[*] Loading pre-generated initial states from {initial_path}")
+            initial_states = np.load(initial_path)
+            
+            # Auto-locate metadata CSV
+            csv_path = Path(args.metadata_csv_path) if args.metadata_csv_path else initial_path.parent / f"{initial_path.stem.replace('-initial-states', '')}-recovery-metadata.csv"
+            if csv_path.exists():
+                print(f"[*] Loading recovery metadata from {csv_path}")
+                metadata = load_recovery_metadata(csv_path)
+            else:
+                default_csv = initial_path.parent / "sudoku-test-data-recovery-metadata.csv"
+                if default_csv.exists():
+                    print(f"[*] Loading recovery metadata from {default_csv}")
+                    metadata = load_recovery_metadata(default_csv)
+                else:
+                    print(f"[!] Metadata CSV not found. Will use fallback round-robin logic for t_frac.")
+        else:
+            print(f"[!] Pre-generated initial states file not found at {initial_path}. Falling back to runtime diffusion.")
+
     stop = min(args.offset + args.num_examples, len(boards))
     indices = list(range(args.offset, stop))
     if not indices:
@@ -620,6 +761,8 @@ def main() -> None:
         error_masks=error_masks,
         indices=indices,
         args=args,
+        initial_states=initial_states,
+        metadata=metadata,
     )
 
     mean_non_clue_cell_accuracy = float(np.mean([r["non_clue_cell_accuracy"] for r in rows]))

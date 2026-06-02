@@ -1,10 +1,3 @@
-"""
-Compatibility entry point for MDLM inference.
-
-The implementation lives in ``MDLM.inference`` so CLI parsing, model loading,
-sampling, metrics, and Sudoku visualization stay in separate modules.
-"""
-
 from __future__ import annotations
 
 import sys

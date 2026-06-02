@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+from pathlib import Path
 
 import numpy as np
 
@@ -108,6 +109,26 @@ class SudokuTaskAdapter(TaskAdapter):
         else:
             indices = list(range(min(num, N)))
 
+        recovery = self._load_recovery_arrays(path, N)
+        if recovery is not None:
+            corrupted, error_masks, initial_states = recovery
+            selected_boards = flat_boards[indices]
+            selected_clues = flat_clues[indices]
+            selected_initial = initial_states[indices]
+            selected_corrupted = corrupted[indices]
+            selected_errors = error_masks[indices]
+
+            self._solution_strings = boards_to_strings(selected_boards)
+            self._revisitable_regions = [
+                [not bool(v) for v in row] for row in selected_clues
+            ]
+            self._injected_error_masks = [
+                [bool(v) for v in row] for row in selected_errors
+            ]
+            self._initial_confidence_strings = boards_to_strings(selected_corrupted)
+            self._sudoku_recovery_indices = indices
+            return boards_to_strings(selected_initial)
+
         selected_boards = flat_boards[indices]
         selected_clues  = flat_clues[indices]
 
@@ -116,8 +137,48 @@ class SudokuTaskAdapter(TaskAdapter):
 
         # Store solved boards for display in run_inference (ground truth grids).
         self._solution_strings = boards_to_strings(selected_boards)
+        self._revisitable_regions = [
+            [bool(v == 0) for v in row] for row in puzzles
+        ]
+        self._injected_error_masks = None
+        self._initial_confidence_strings = None
+        self._sudoku_recovery_indices = indices
 
         return boards_to_strings(puzzles)
+
+    def _load_recovery_arrays(
+        self,
+        path: str,
+        expected_len: int,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+        base_path = Path(path)
+        data_dir = base_path.parent
+        stem = base_path.stem
+        corrupted_path = data_dir / f"{stem}-corrupted-boards.npy"
+        errors_path = data_dir / f"{stem}-corrupted-errors.npy"
+        initial_path = data_dir / f"{stem}-initial-states.npy"
+
+        if not (
+            corrupted_path.exists()
+            and errors_path.exists()
+            and initial_path.exists()
+        ):
+            return None
+
+        corrupted = np.load(corrupted_path)
+        error_masks = np.load(errors_path)
+        initial_states = np.load(initial_path)
+        if (
+            len(corrupted) != expected_len
+            or len(error_masks) != expected_len
+            or len(initial_states) != expected_len
+        ):
+            raise ValueError(
+                "Sudoku recovery arrays must match the base dataset length: "
+                f"boards={expected_len}, corrupted={len(corrupted)}, "
+                f"errors={len(error_masks)}, initial_states={len(initial_states)}"
+            )
+        return corrupted, error_masks, initial_states
 
 
     def describe_example(self, text: str) -> list[tuple[str, str]]:

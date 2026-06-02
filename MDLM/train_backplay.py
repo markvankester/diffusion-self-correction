@@ -4,7 +4,6 @@ from pathlib import Path
 import argparse
 import os
 import sys
-import tomllib
 
 import torch
 import torch.nn as nn
@@ -13,6 +12,7 @@ from transformers import DataCollatorForSeq2Seq, PreTrainedTokenizerFast
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from MDLM.utils import load_config_file, resolve_config_path
 from backbones.llada.config import MDLMConfig
 from backbones.llada.model import MDLMModelLM
 from data.processing.collators import NoAttentionMaskWrapper
@@ -22,19 +22,13 @@ from MDLM.tasks import get_task_adapter
 
 
 CONFIG_DIR = Path(__file__).resolve().parent / "configs"
-DEFAULT_CONFIG_PATH = CONFIG_DIR / "backplay_arithmetic.toml"
+DEFAULT_CONFIG_PATH = CONFIG_DIR / "train_backplay_arithmetic.toml"
 TASK_CONFIG_PATHS = {
-    "arithmetic": CONFIG_DIR / "backplay_arithmetic.toml",
-    "sudoku": CONFIG_DIR / "backplay_sudoku.toml",
+    "arithmetic": CONFIG_DIR / "train_backplay_arithmetic.toml",
+    "sudoku": CONFIG_DIR / "train_backplay_sudoku.toml",
 }
 
 
-def load_config_file(config_path: str | os.PathLike) -> dict:
-    with open(config_path, "rb") as f:
-        config = tomllib.load(f)
-    if not isinstance(config, dict):
-        raise ValueError("Config file must contain a top-level TOML table.")
-    return config
 
 
 def parse_args() -> argparse.Namespace:
@@ -81,18 +75,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--loss_weight_type", type=str, default="scheduler")
 
     initial_args, _ = parser.parse_known_args()
-    config_path = _default_config_path(initial_args)
+    config_path = resolve_config_path(
+        initial_args.config,
+        initial_args.task,
+        TASK_CONFIG_PATHS,
+        DEFAULT_CONFIG_PATH,
+    )
     parser.set_defaults(**load_config_file(config_path))
     parser.set_defaults(config=str(config_path))
     return parser.parse_args()
-
-
-def _default_config_path(args: argparse.Namespace) -> Path:
-    if args.config:
-        return Path(args.config)
-    if args.task in TASK_CONFIG_PATHS:
-        return TASK_CONFIG_PATHS[args.task]
-    return DEFAULT_CONFIG_PATH
 
 
 def main() -> None:

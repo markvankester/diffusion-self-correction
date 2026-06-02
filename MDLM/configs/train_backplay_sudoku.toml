@@ -1,0 +1,28 @@
+# BackPlay correction-head training config for Sudoku.
+
+task = "sudoku"                              # Options: "arithmetic", "sudoku"
+
+# Data and paths
+checkpoint = "./checkpoints/sudoku/baseline/Run 2/checkpoint-200000"    # Path to a pretrained checkpoint to start training from.
+data_path = "data/sudoku-train-data.npy"                                # Training dataset path.
+output_dir = "./checkpoints/sudoku/backplay"                            # Directory for checkpoints and trainer outputs.
+limit_data = 0                                                          # Number of rows to load (0 for the full dataset).
+eval_fraction = 0.05                                                    # Fraction of training data used as eval split.
+
+# BackPlay adapter
+backplay_head_type = "linear"                # Options: "linear", "scalar", "attention"
+backplay_delta_t = 0.125                     # Correction time horizon fraction.
+backplay_loss_scope = "non_mask"             # Target tokens to compute loss on (Options: "non_mask", "artifact", "all").
+
+# Optimization
+batch_size = 256
+grad_accum = 1
+lr = 3e-4
+max_steps = 400000
+warmup_steps = 2000
+
+# Evaluation
+eval_steps = 1000
+
+# Reporting
+run_name = "backplay-sudoku"
