@@ -145,6 +145,7 @@ def run_prompts(
                 display_prompt_ids=display_prompt_ids,
                 revisitable_region=revisitable_region,
                 quiet=quiet,
+                model=model,
             )
         else:
             output = sampler.sample([prompt_ids], config=sample_config)
@@ -168,6 +169,7 @@ def run_prompts(
                 display_prompt_ids=display_prompt_ids,
                 revisitable_region=_generation_region(output, len(prompt_ids)),
                 quiet=quiet,
+                model=model,
             )
 
         if show_stats and output.histories is not None and not quiet:
@@ -499,6 +501,7 @@ def _handle_arithmetic_result(
     display_prompt_ids: list[int],
     revisitable_region: list[bool],
     quiet: bool = False,
+    model=None,
 ) -> None:
     if task_name != "arithmetic":
         return
@@ -521,6 +524,83 @@ def _handle_arithmetic_result(
             sample_idx=0,
             mask_token_id=tokenizer.mask_token_id,
         )
+        
+        # Log additional metadata for hypotheses validation
+        # 1. Operator type
+        operator = "unknown"
+        for op in ["+", "-", "*"]:
+            if op in prompt:
+                operator = op
+                break
+        remasking_metrics["operator"] = operator
+        
+        # 2. Extract initial confidence values
+        initial_confidence_corrupted = None
+        initial_confidence_correct = None
+        remedi_upm_confidence = None
+        method_quality_score = None
+
+        if model is not None and output.histories is not None and len(output.histories) > 0:
+            init_ids = output.histories[0].to(model.device)
+            attention_mask = torch.ones_like(init_ids)
+            
+            with torch.no_grad():
+                outputs = model(init_ids, attention_mask=attention_mask)
+                logits = outputs.logits
+                probs = torch.softmax(logits, dim=-1)
+                
+                # UPM confidence (ReMEDI specific)
+                model_conf = getattr(outputs, "confidences", None)
+                if model_conf is not None:
+                    remedi_upm_confidence_all = model_conf[0].cpu().tolist()
+                else:
+                    remedi_upm_confidence_all = None
+                
+                # Injected positions
+                injected_positions = [pos for pos, is_err in enumerate(injected_error_mask) if is_err]
+                if injected_positions:
+                    corrupted_probs = []
+                    correct_probs = []
+                    upm_confs = []
+                    
+                    for pos in injected_positions:
+                        # Corrupted token ID
+                        corr_token_id = init_ids[0, pos].item()
+                        corrupted_probs.append(probs[0, pos, corr_token_id].item())
+                        
+                        # Correct token ID
+                        if pos < len(target_ids):
+                            correct_token_id = target_ids[pos]
+                            correct_probs.append(probs[0, pos, correct_token_id].item())
+                            
+                        # UPM confidence
+                        if remedi_upm_confidence_all is not None:
+                            upm_confs.append(remedi_upm_confidence_all[pos])
+                    
+                    if corrupted_probs:
+                        initial_confidence_corrupted = sum(corrupted_probs) / len(corrupted_probs)
+                    if correct_probs:
+                        initial_confidence_correct = sum(correct_probs) / len(correct_probs)
+                    if upm_confs:
+                        remedi_upm_confidence = sum(upm_confs) / len(upm_confs)
+                        
+        # Extract quality score if PRISM/Backplay quality scores are present
+        if (
+            output.quality_scores is not None
+            and len(output.quality_scores) > 0
+            and output.quality_scores[0] is not None
+        ):
+            first_quality = output.quality_scores[0][0]
+            injected_positions = [pos for pos, is_err in enumerate(injected_error_mask) if is_err]
+            if injected_positions:
+                quality_vals = [first_quality[pos].item() for pos in injected_positions]
+                method_quality_score = sum(quality_vals) / len(quality_vals)
+
+        remasking_metrics["initial_confidence_corrupted"] = initial_confidence_corrupted
+        remasking_metrics["initial_confidence_correct"] = initial_confidence_correct
+        remasking_metrics["remedi_upm_confidence"] = remedi_upm_confidence
+        remasking_metrics["method_quality_score"] = method_quality_score
+
         metrics.add(
             idx=idx,
             prompt=prompt,
