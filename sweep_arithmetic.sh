@@ -5,16 +5,17 @@
 #SBATCH --ntasks-per-node=1
 #SBATCH --partition=gpu_a100
 #SBATCH --gres=gpu:1
-#SBATCH --array=0-2        # 0=remdm, 1=prism, 2=remedi
+#SBATCH --array=0-3        # 0=remdm, 1=prism, 2=backplay, 3=remedi
 
 source $HOME/.bashrc
 cd $HOME/diffusion-self-correction
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
 CHECKPOINTS=("checkpoints/arithmetic/final2/checkpoint-250000" 
-             "checkpoints/arithmetic/prism/checkpoint-100000"
+             "checkpoints/arithmetic/prism/checkpoint-200000"
+             "checkpoints/arithmetic/backplay/checkpoint-400000"
              "checkpoints/arithmetic/remedi2/checkpoint-400000")
-METHODS=("remdm_conf" "prism" "remedi")
+METHODS=("remdm_conf" "prism" "backplay" "remedi")
 
 uv run python scripts/run_hyperparam_sweep.py \
     --task arithmetic \
@@ -22,5 +23,5 @@ uv run python scripts/run_hyperparam_sweep.py \
     --methods ${METHODS[$SLURM_ARRAY_TASK_ID]//,/ } \
     --num_prompts 1000 \
     --dataset_path data/arithmetic_test_corrupted.jsonl \
-    --output sweep_results/arithmetic_sweep_corrupted_${SLURM_ARRAY_TASK_ID}.csv \
+    --output sweep_results/arithmetic_sweep_${SLURM_ARRAY_TASK_ID}.csv \
     --save_examples
