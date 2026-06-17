@@ -394,7 +394,7 @@ def _handle_sudoku_result(
                     remedi_upm_confidence_all = None
                 
                 # Injected positions
-                injected_positions = [pos for pos, is_err in enumerate(injected_error_mask) if is_err]
+                injected_positions = [pos for pos, is_err in enumerate(injected_error_mask) if is_err] if injected_error_mask is not None else []
                 if injected_positions:
                     corrupted_probs = []
                     correct_probs = []
@@ -428,7 +428,7 @@ def _handle_sudoku_result(
             and output.quality_scores[0] is not None
         ):
             first_quality = output.quality_scores[0][0]
-            injected_positions = [pos for pos, is_err in enumerate(injected_error_mask) if is_err]
+            injected_positions = [pos for pos, is_err in enumerate(injected_error_mask) if is_err] if injected_error_mask is not None else []
             if injected_positions:
                 quality_vals = [first_quality[pos].item() for pos in injected_positions]
                 method_quality_score = sum(quality_vals) / len(quality_vals)
